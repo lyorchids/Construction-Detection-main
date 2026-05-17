@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { uploadImage } from '../api/upload'
 import api from '../api'
 import DetectionCanvas from '../components/DetectionCanvas.vue'
+import ViolationWarning from '../components/ViolationWarning.vue'
 
 const uploading = ref(false)
 const detecting = ref(false)
@@ -79,13 +80,18 @@ function reset() {
             </div>
           </template>
 
-          <DetectionCanvas
+          <div
             v-if="currentFrame"
-            :image="currentFrame"
-            :detections="detections"
-            :violations="violations"
-            :show-labels="true"
-          />
+            class="image-wrapper"
+            :class="{ 'violation-active': violations.length > 0 }"
+          >
+            <DetectionCanvas
+              :image="currentFrame"
+              :detections="detections"
+              :violations="violations"
+              :show-labels="true"
+            />
+          </div>
           <div v-else>
             <el-upload
               drag
@@ -114,6 +120,8 @@ function reset() {
             />
           </div>
         </el-card>
+
+        <ViolationWarning v-if="violations.length > 0" :violations="violations" />
       </el-col>
 
       <el-col :span="8">
@@ -125,20 +133,45 @@ function reset() {
           </el-descriptions>
         </el-card>
 
-        <el-card v-if="violations.length > 0">
-          <template #header>
-            <span style="color: #F44336">违规告警</span>
-          </template>
-          <el-alert
-            v-for="(v, i) in violations"
-            :key="i"
-            :title="`${VIOLATION_LABELS[v.type] || v.type}: ${v.count}次`"
-            type="warning"
-            :closable="false"
-            style="margin-bottom: 8px"
-          />
-        </el-card>
       </el-col>
     </el-row>
   </div>
 </template>
+
+<style scoped>
+.image-wrapper {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.image-wrapper.violation-active {
+  box-shadow:
+    0 0 0 3px rgba(244, 67, 54, 0.6),
+    0 0 25px rgba(244, 67, 54, 0.25);
+  animation: card-pulse 2s ease-in-out infinite;
+}
+
+.image-wrapper.violation-active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: rgba(255, 0, 0, 0.1);
+  pointer-events: none;
+  z-index: 10;
+  animation: overlay-pulse 2s ease-in-out infinite;
+}
+
+@keyframes card-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(244, 67, 54, 0.6), 0 0 20px rgba(244, 67, 54, 0.2); }
+  50% { box-shadow: 0 0 0 3px rgba(244, 67, 54, 0.8), 0 0 40px rgba(244, 67, 54, 0.35); }
+}
+
+@keyframes overlay-pulse {
+  0%, 100% { background: rgba(255, 0, 0, 0.08); }
+  50% { background: rgba(255, 0, 0, 0.15); }
+}
+</style>
