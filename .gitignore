@@ -118,3 +118,5 @@ docker-compose.override.yml
 *.7z
 
 .env
+
+.opencode/
