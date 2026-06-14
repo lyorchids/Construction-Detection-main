@@ -13,4 +13,8 @@ api.interceptors.response.use(
   },
 )
 
+export function getModels() {
+  return api.get('/models')
+}
+
 export default api

@@ -1,11 +1,21 @@
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { uploadVideo } from '../api/upload'
+import { getModels } from '../api'
+import { getProfiles, createProfile } from '../api/detection_profile'
+import type { DetectionProfile } from '../api/detection_profile'
 import DetectionCanvas from '../components/DetectionCanvas.vue'
 import ViolationWarning from '../components/ViolationWarning.vue'
 import VideoTimeline from '../components/VideoTimeline.vue'
+import DetectionProfileDialog from '../components/DetectionProfileDialog.vue'
 import type { TimelineMarker } from '../components/VideoTimeline.vue'
+
+interface ModelInfo {
+  name: string
+  classes: Record<string, string>
+  danger_rules: boolean
+}
 
 const uploading = ref(false)
 const ws = ref<WebSocket | null>(null)
@@ -23,32 +33,215 @@ const duration = ref(0)
 const totalObjects = ref(0)
 const totalViolations = ref(0)
 const timelineMarkers = ref<TimelineMarker[]>([])
+const showSafetyVest = ref(true)
+const showAllDetections = ref(false)
+
+const availableModels = ref<Record<string, ModelInfo>>({})
+const selectedModels = ref<Record<string, boolean>>({})
+const modelThresholds = ref<Record<string, number>>({})
+
+// Danger rules state (for ppe model)
+const dangerRules = ref({
+  detect_no_hardhat: true,
+  detect_no_mask: true,
+  detect_no_safety_vest: true,
+  detect_near_machinery_or_vehicle: true,
+  detect_in_restricted_area: true,
+  detect_in_utility_pole_restricted_area: false,
+  detect_machinery_close_to_pole: false,
+})
+
+// Video-specific settings
+const frameInterval = ref(10)
+const saveScreenshots = ref(true)
+
+// Profile state
+const profiles = ref<DetectionProfile[]>([])
+const selectedProfileId = ref<number | null>(null)
+const dialogVisible = ref(false)
+const configExpanded = ref(false)
+
+// Violation drawer
+const drawerVisible = ref(false)
+interface ViolationLogItem {
+  type: string
+  label: string
+  color: string
+  count: number
+}
+const violationLog = ref<ViolationLogItem[]>([])
+
+onMounted(async () => {
+  try {
+    const { data } = await getModels()
+    availableModels.value = data.models || {}
+    for (const key of Object.keys(data.models || {})) {
+      selectedModels.value[key] = true
+      modelThresholds.value[key] = 0.25
+    }
+  } catch {
+    availableModels.value = {
+      ppe: { name: '安全PPE检测', classes: {}, danger_rules: true },
+      fire: { name: '火情烟雾检测', classes: {}, danger_rules: false },
+    }
+    selectedModels.value = { ppe: true, fire: true }
+    modelThresholds.value = { ppe: 0.25, fire: 0.25 }
+  }
+  await loadProfiles()
+})
+
+async function loadProfiles() {
+  try {
+    const { data } = await getProfiles('video')
+    profiles.value = data
+  } catch {
+    // ignore
+  }
+}
+
+function compatRules(rules: Record<string, any>): Record<string, any> {
+  if (rules.detect_no_safety_vest_or_helmet !== undefined) {
+    const val = !!rules.detect_no_safety_vest_or_helmet
+    return {
+      detect_no_hardhat: val,
+      detect_no_mask: val,
+      detect_no_safety_vest: val,
+      detect_near_machinery_or_vehicle: rules.detect_near_machinery_or_vehicle ?? true,
+      detect_in_restricted_area: rules.detect_in_restricted_area ?? true,
+      detect_in_utility_pole_restricted_area: rules.detect_in_utility_pole_restricted_area ?? false,
+      detect_machinery_close_to_pole: rules.detect_machinery_close_to_pole ?? false,
+    }
+  }
+  return rules
+}
+
+function applyProfile(profile: DetectionProfile) {
+  if (!profile?.config?.models) return
+  const cfg = profile.config
+  const ppe = cfg.models.ppe
+  const fire = cfg.models.fire
+  selectedModels.value = {
+    ppe: ppe?.enabled ?? true,
+    fire: fire?.enabled ?? false,
+  }
+  modelThresholds.value = {
+    ppe: ppe?.threshold ?? 0.25,
+    fire: fire?.threshold ?? 0.25,
+  }
+  if (ppe?.danger_rules) {
+    dangerRules.value = { ...dangerRules.value, ...compatRules(ppe.danger_rules) }
+  }
+  if (cfg.frame_interval != null) frameInterval.value = cfg.frame_interval
+  if (cfg.save_screenshots != null) saveScreenshots.value = cfg.save_screenshots
+}
+
+function onProfileChange(profileId: number | string) {
+  const id = Number(profileId)
+  selectedProfileId.value = id || null
+  if (!id) return
+  const profile = profiles.value.find(p => p.id === id)
+  if (profile) applyProfile(profile)
+}
+
+async function saveAsProfile() {
+  dialogVisible.value = true
+}
+
+async function handleSaveProfile(data: any) {
+  try {
+    await createProfile(data)
+    ElMessage.success('配置已保存')
+    await loadProfiles()
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.detail || '保存失败')
+  }
+}
+
+const selectedModelKeys = computed(() =>
+  Object.entries(selectedModels.value)
+    .filter(([, v]) => v)
+    .map(([k]) => k),
+)
+
+const filteredViolations = computed(() => {
+  if (showAllDetections.value) return violations.value
+  if (showSafetyVest.value) return violations.value
+  return violations.value.filter((v: any) => !['warning_no_safety_vest', 'warning_no_mask'].includes(v.type))
+})
+
+const filteredDetections = computed(() => {
+  if (showAllDetections.value) return detections.value
+
+  const activeTypes = new Set(filteredViolations.value.map((v: any) => v.type))
+
+  return detections.value.filter((d: any) => {
+    if (d.class_name === 'Person') return true
+    if (d.class_name === 'Hardhat') return true
+    if (d.class_name === 'Fire') return true
+    if (d.class_name === 'Smoke') return true
+    if (d.class_name === 'NO-Hardhat') return activeTypes.has('warning_no_hardhat')
+    if (d.class_name === 'NO-Mask') return activeTypes.has('warning_no_mask')
+    if (d.class_name === 'NO-Safety Vest') return activeTypes.has('warning_no_safety_vest')
+    if (d.class_name === 'Machinery') return activeTypes.has('warning_close_to_machinery')
+    if (d.class_name === 'Vehicle') return activeTypes.has('warning_close_to_vehicle')
+    return false
+  })
+})
+
+watch(violations, (newViolations) => {
+  if (!newViolations || newViolations.length === 0) return
+  for (const v of newViolations) {
+    const existing = violationLog.value.find(item => item.type === v.type)
+    if (existing) {
+      existing.count += v.count || 1
+    } else {
+      violationLog.value.push({
+        type: v.type,
+        label: VIOLATION_LABELS[v.type] || v.type,
+        color: VIOLATION_COLORS[v.type] || '#F44336',
+        count: v.count || 1,
+      })
+    }
+  }
+  if (!drawerVisible.value) {
+    drawerVisible.value = true
+  }
+})
 
 const VIOLATION_LABELS: Record<string, string> = {
   warning_no_hardhat: '未戴安全帽',
+  warning_no_mask: '未佩戴口罩',
   warning_no_safety_vest: '未穿反光背心',
   warning_close_to_machinery: '靠近作业机械',
   warning_close_to_vehicle: '靠近施工车辆',
   warning_people_in_controlled_area: '进入锥形桶管控区',
   warning_people_in_utility_pole_controlled_area: '进入电线杆管控区',
+  warning_fire: '检测到火焰',
+  warning_smoke: '检测到烟雾',
 }
 
 const VIOLATION_PRIORITY: Record<string, number> = {
+  warning_fire: 10,
+  warning_smoke: 9,
   warning_no_hardhat: 5,
   warning_people_in_controlled_area: 4,
   warning_people_in_utility_pole_controlled_area: 4,
   warning_close_to_machinery: 3,
   warning_close_to_vehicle: 3,
   warning_no_safety_vest: 1,
+  warning_no_mask: 1,
 }
 
 const VIOLATION_COLORS: Record<string, string> = {
   warning_no_hardhat: '#F44336',
+  warning_no_mask: '#FF9800',
   warning_no_safety_vest: '#FF9800',
   warning_close_to_machinery: '#FF5722',
   warning_close_to_vehicle: '#FFC107',
   warning_people_in_controlled_area: '#E91E63',
   warning_people_in_utility_pole_controlled_area: '#9C27B0',
+  warning_fire: '#FF5722',
+  warning_smoke: '#9E9E9E',
 }
 
 function hasMarkerAtFrame(frame: number): boolean {
@@ -81,6 +274,8 @@ function resetState() {
   totalObjects.value = 0
   totalViolations.value = 0
   timelineMarkers.value = []
+  violationLog.value = []
+  drawerVisible.value = false
   filePath.value = ''
 }
 
@@ -113,7 +308,18 @@ function connectWebSocket() {
   ws.value.onopen = () => {
     wsConnected.value = true
     isDetecting.value = true
-    ws.value?.send(JSON.stringify({ action: 'start' }))
+    const thresholds: Record<string, number> = {}
+    for (const key of selectedModelKeys.value) {
+      thresholds[key] = modelThresholds.value[key] ?? 0.25
+    }
+    ws.value?.send(JSON.stringify({
+      action: 'start',
+      models: selectedModelKeys.value,
+      thresholds,
+      danger_rules: dangerRules.value,
+      frame_interval: frameInterval.value,
+      save_screenshots: saveScreenshots.value,
+    }))
   }
 
   ws.value.onmessage = (event) => {
@@ -191,6 +397,93 @@ onUnmounted(() => {
 
 <template>
   <div style="padding: 20px">
+    <!-- Collapsible config card -->
+    <el-card class="model-config-card">
+      <template #header>
+        <div style="display: flex; justify-content: space-between; align-items: center">
+          <span style="font-weight: 600">检测配置</span>
+          <div style="display: flex; gap: 8px">
+            <el-button size="small" @click="saveAsProfile">+ 保存</el-button>
+            <el-button size="small" @click="$router.push('/profiles')">管理</el-button>
+          </div>
+        </div>
+      </template>
+
+      <div class="profile-selector-row">
+        <span style="font-size: 13px; color: #666; white-space: nowrap">选择配置:</span>
+        <el-select
+          v-model="selectedProfileId"
+          placeholder="手动配置"
+          clearable
+          style="width: 260px"
+          @change="onProfileChange"
+        >
+          <el-option
+            v-for="p in profiles"
+            :key="p.id"
+            :label="p.name"
+            :value="p.id"
+          />
+        </el-select>
+      </div>
+
+      <!-- Summary line -->
+      <div class="config-summary">
+        <span class="config-tag" :class="{ on: selectedModels.ppe }">PPE</span>
+        <span v-if="selectedModels.ppe" class="config-sub">({{ dangerRules.detect_no_hardhat ? '安全帽' : '' }}{{ dangerRules.detect_no_mask ? '口罩' : '' }}{{ dangerRules.detect_no_safety_vest ? '背心' : '' }}{{ dangerRules.detect_near_machinery_or_vehicle ? '机械' : '' }}{{ dangerRules.detect_in_restricted_area ? '锥形桶' : '' }})</span>
+        <span class="config-tag" :class="{ on: selectedModels.fire }">Fire</span>
+        <span class="config-tag">{{ frameInterval }}帧</span>
+        <el-button link size="small" @click="configExpanded = !configExpanded" style="margin-left: auto">
+          {{ configExpanded ? '收起' : '展开' }}详细配置
+        </el-button>
+      </div>
+
+      <!-- Expanded details -->
+      <el-collapse-transition>
+        <div v-show="configExpanded" class="config-detail">
+          <div v-for="(info, key) in availableModels" :key="key" class="model-config-row">
+            <el-checkbox v-model="selectedModels[key]" :label="info.name" size="large" />
+            <div v-if="selectedModels[key]" class="threshold-slider">
+              <span class="threshold-label">置信度: {{ (modelThresholds[key] * 100).toFixed(0) }}%</span>
+              <el-slider
+                v-model="modelThresholds[key]"
+                :min="0.05"
+                :max="0.95"
+                :step="0.05"
+                size="small"
+                style="width: 160px"
+              />
+            </div>
+            <div v-if="selectedModels[key] && info.danger_rules" class="danger-rules-inline">
+              <el-checkbox v-model="dangerRules.detect_no_hardhat" size="small">未戴安全帽</el-checkbox>
+              <el-checkbox v-model="dangerRules.detect_no_mask" size="small">未戴口罩</el-checkbox>
+              <el-checkbox v-model="dangerRules.detect_no_safety_vest" size="small">未穿背心</el-checkbox>
+              <el-checkbox v-model="dangerRules.detect_near_machinery_or_vehicle" size="small">靠近机械/车辆</el-checkbox>
+              <el-checkbox v-model="dangerRules.detect_in_restricted_area" size="small">锥形桶管控区</el-checkbox>
+              <el-checkbox v-model="dangerRules.detect_in_utility_pole_restricted_area" size="small">电线杆管控区</el-checkbox>
+              <el-checkbox v-model="dangerRules.detect_machinery_close_to_pole" size="small">杆旁机械</el-checkbox>
+            </div>
+          </div>
+
+          <!-- Video-specific settings -->
+          <div class="video-params-row" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0">
+            <div class="param-item">
+              <span class="param-label">帧检测间隔:</span>
+              <el-slider v-model="frameInterval" :min="1" :max="60" :step="1" size="small" style="width: 200px" />
+              <span class="threshold-label">{{ frameInterval }} 帧</span>
+            </div>
+            <div class="param-item">
+              <span class="param-label">保存违规截图:</span>
+              <el-switch v-model="saveScreenshots" />
+            </div>
+          </div>
+        </div>
+      </el-collapse-transition>
+    </el-card>
+
+    <div class="page-toolbar">
+      <el-switch v-model="showAllDetections" active-text="完整标注" inactive-text="精简标注" size="small" />
+    </div>
     <el-row :gutter="20">
       <el-col :span="18">
         <el-card>
@@ -218,14 +511,15 @@ onUnmounted(() => {
           <template v-else>
             <div
               class="image-wrapper"
-              :class="{ 'violation-active': violations.length > 0 }"
-            >
-              <DetectionCanvas
-                :image="currentFrame"
-                :detections="detections"
-                :violations="violations"
-                :show-labels="true"
-              />
+            :class="{ 'violation-active': filteredViolations.length > 0 }"
+          >
+            <DetectionCanvas
+              :image="currentFrame"
+              :detections="filteredDetections"
+              :violations="filteredViolations"
+              :show-labels="true"
+            />
+            <div v-if="filteredViolations.length > 0" class="violation-overlay" />
             </div>
 
             <div class="control-bar">
@@ -246,6 +540,7 @@ onUnmounted(() => {
                 >
                   ⏹ 停止
                 </el-button>
+                <el-switch v-if="!showAllDetections" v-model="showSafetyVest" active-text="安全背心" size="small" />
                 <el-tag v-if="wsConnected" type="success" effect="dark" size="small">● 已连接</el-tag>
                 <el-tag v-else-if="!isDetecting && filePath" type="info" size="small">● 未开始</el-tag>
               </div>
@@ -264,23 +559,38 @@ onUnmounted(() => {
           </template>
         </el-card>
 
-        <ViolationWarning v-if="violations.length > 0" :violations="violations" />
+        <ViolationWarning v-if="filteredViolations.length > 0" :violations="filteredViolations" />
       </el-col>
 
       <el-col :span="6">
-        <el-card v-if="violations.length > 0" style="margin-bottom: 16px">
+        <el-card style="margin-bottom: 16px">
           <template #header>
             <div class="right-header">
-              <span style="font-weight: 600; color: #d32f2f">🚨 当前帧违规</span>
+              <span style="font-weight: 600">🚨 违规记录</span>
+              <el-button
+                v-if="violationLog.length > 0"
+                size="small"
+                type="danger"
+                @click="drawerVisible = true"
+              >
+                查看详情
+              </el-button>
             </div>
           </template>
-          <div v-for="v in violations" :key="v.type" class="right-violation-row">
-            <span
-              class="vio-dot"
-              :style="{ background: VIOLATION_COLORS[v.type] || '#F44336' }"
-            ></span>
-            <span class="vio-label">{{ VIOLATION_LABELS[v.type] || v.type }}</span>
-            <el-tag size="small" type="danger" effect="dark">{{ v.count }}次</el-tag>
+          <div v-if="violationLog.length === 0" style="color: #999; font-size: 13px; text-align: center; padding: 8px 0">
+            暂无违规
+          </div>
+          <div v-else class="stats-list">
+            <div v-for="v in violationLog.slice(0, 5)" :key="v.type" class="stats-row">
+              <span style="display: flex; align-items: center; gap: 6px; font-size: 13px">
+                <span class="vio-dot" :style="{ background: v.color }"></span>
+                {{ v.label }}
+              </span>
+              <el-tag size="small" type="danger" effect="dark">×{{ v.count }}</el-tag>
+            </div>
+            <div v-if="violationLog.length > 5" style="font-size: 12px; color: #999; text-align: center; margin-top: 4px">
+              还有 {{ violationLog.length - 5 }} 项...
+            </div>
           </div>
         </el-card>
 
@@ -291,12 +601,12 @@ onUnmounted(() => {
           <div class="stats-list">
             <div class="stats-row">
               <span class="stats-key">检测目标</span>
-              <span class="stats-val">{{ isDetecting ? detections.length : totalObjects }}</span>
+              <span class="stats-val">{{ isDetecting ? filteredDetections.length : totalObjects }}</span>
             </div>
             <div class="stats-row">
               <span class="stats-key">违规次数</span>
-              <span class="stats-val" :class="{ 'has-violation': totalViolations > 0 }">
-                {{ isDetecting ? violations.length : totalViolations }}
+              <span class="stats-val" :class="{ 'has-violation': filteredViolations.length > 0 }">
+                {{ isDetecting ? filteredViolations.length : totalViolations }}
               </span>
             </div>
             <div class="stats-divider"></div>
@@ -322,10 +632,135 @@ onUnmounted(() => {
         </el-card>
       </el-col>
     </el-row>
+
+    <el-drawer
+      v-model="drawerVisible"
+      title="🚨 违规清单"
+      direction="rtl"
+      size="380px"
+    >
+      <template v-if="violationLog.length > 0">
+        <div class="drawer-summary">
+          本视频共检测到 <strong>{{ violationLog.reduce((s, v) => s + v.count, 0) }}</strong> 次违规
+        </div>
+        <div class="drawer-list">
+          <div v-for="v in violationLog" :key="v.type" class="drawer-item">
+            <span class="vio-dot" :style="{ background: v.color }"></span>
+            <span class="drawer-label">{{ v.label }}</span>
+            <el-tag size="small" type="danger">{{ v.count }}次</el-tag>
+          </div>
+        </div>
+      </template>
+      <div v-else style="text-align: center; color: #999; padding: 40px 0">
+        暂无违规记录
+      </div>
+    </el-drawer>
+
+    <DetectionProfileDialog
+      v-model="dialogVisible"
+      :profile="null"
+      profile-type="video"
+      @save="handleSaveProfile"
+    />
   </div>
 </template>
 
 <style scoped>
+.model-config-card {
+  margin-bottom: 16px;
+}
+.model-config-card :deep(.el-card__header) {
+  padding: 12px 20px;
+}
+.model-config-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.model-config-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.threshold-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.threshold-label {
+  font-size: 13px;
+  color: #666;
+  white-space: nowrap;
+}
+.danger-rules-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-left: 24px;
+}
+.danger-rules-inline :deep(.el-checkbox__label) {
+  font-size: 12px;
+}
+.profile-selector-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.config-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 0;
+  border-top: 1px solid #f0f0f0;
+}
+.config-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: #f0f0f0;
+  color: #999;
+}
+.config-tag.on {
+  background: #e6f7ff;
+  color: #1890ff;
+  font-weight: 600;
+}
+.config-sub {
+  font-size: 12px;
+  color: #999;
+}
+.config-detail {
+  padding: 12px 0 4px;
+  border-top: 1px solid #f0f0f0;
+  margin-top: 8px;
+}
+.video-params-row {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  flex-wrap: wrap;
+}
+.param-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.param-label {
+  font-size: 13px;
+  color: #666;
+  white-space: nowrap;
+}
+
+.page-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
 .image-wrapper {
   position: relative;
   border-radius: 6px;
@@ -334,9 +769,10 @@ onUnmounted(() => {
 
 .image-wrapper.violation-active {
   box-shadow:
-    0 0 0 3px rgba(244, 67, 54, 0.6),
-    0 0 25px rgba(244, 67, 54, 0.25);
-  animation: card-pulse 2s ease-in-out infinite;
+    0 0 0 4px rgba(244, 67, 54, 0.8),
+    0 0 30px rgba(244, 67, 54, 0.4),
+    0 0 60px rgba(244, 67, 54, 0.15);
+  animation: card-pulse 1.5s ease-in-out infinite;
 }
 
 .image-wrapper.violation-active::before {
@@ -385,6 +821,44 @@ onUnmounted(() => {
 .right-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+}
+.violation-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: rgba(255, 0, 0, 0.12);
+  animation: overlay-breathe 1.5s ease-in-out infinite;
+  z-index: 5;
+}
+.image-wrapper {
+  position: relative;
+}
+.drawer-summary {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  background: #fff7f7;
+  border-radius: 6px;
+}
+.drawer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.drawer-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #fafafa;
+}
+.drawer-label {
+  flex: 1;
+  font-size: 14px;
+  color: #333;
 }
 
 .right-violation-row {
@@ -459,5 +933,9 @@ onUnmounted(() => {
 @keyframes overlay-pulse {
   0%, 100% { background: rgba(255, 0, 0, 0.08); }
   50% { background: rgba(255, 0, 0, 0.15); }
+}
+@keyframes overlay-breathe {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 </style>

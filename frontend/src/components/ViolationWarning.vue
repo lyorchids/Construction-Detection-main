@@ -14,6 +14,8 @@ const VIOLATION_LABELS: Record<string, string> = {
   warning_close_to_vehicle: '靠近施工车辆',
   warning_people_in_controlled_area: '进入锥形桶管控区',
   warning_people_in_utility_pole_controlled_area: '进入电线杆管控区',
+  warning_fire: '检测到火焰',
+  warning_smoke: '检测到烟雾',
 }
 
 const VIOLATION_ICONS: Record<string, string> = {
@@ -23,6 +25,8 @@ const VIOLATION_ICONS: Record<string, string> = {
   warning_close_to_vehicle: '⚠️',
   warning_people_in_controlled_area: '🚧',
   warning_people_in_utility_pole_controlled_area: '⚡',
+  warning_fire: '🔥',
+  warning_smoke: '💨',
 }
 
 const firstViolation = computed(() => props.violations[0])

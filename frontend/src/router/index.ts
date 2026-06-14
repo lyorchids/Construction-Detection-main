@@ -43,6 +43,11 @@ const router = createRouter({
       name: 'CaseDetail',
       component: () => import('../views/CaseDetail.vue'),
     },
+    {
+      path: '/profiles',
+      name: 'Profiles',
+      component: () => import('../views/DetectionProfiles.vue'),
+    },
   ],
 })
 

@@ -8,6 +8,7 @@ interface Detection {
   class_name: string
   track_id: number | null
   is_moving: boolean
+  source_model?: string
 }
 
 interface Violation {
@@ -27,9 +28,12 @@ const imgRef = ref<HTMLImageElement | null>(null)
 
 const VIOLATION_TYPES: Record<string, string> = {
   warning_no_hardhat: '⚠ 未戴安全帽',
+  warning_no_safety_vest: '⚠ 未穿反光背心',
   warning_close_to_machinery: '⚠ 靠近作业机械',
   warning_close_to_vehicle: '⚠ 靠近施工车辆',
   warning_people_in_controlled_area: '⚠ 进入管控区',
+  warning_fire: '🔥 火焰',
+  warning_smoke: '💨 烟雾',
 }
 
 const CLASS_COLORS: Record<string, string> = {
@@ -44,10 +48,12 @@ const CLASS_COLORS: Record<string, string> = {
   Machinery: '#9C27B0',
   'Utility Pole': '#795548',
   Vehicle: '#00BCD4',
+  Fire: '#FF5722',
+  Smoke: '#9E9E9E',
 }
 
 function isViolationClass(className: string): boolean {
-  return ['NO-Hardhat', 'NO-Mask', 'NO-Safety Vest'].includes(className)
+  return ['NO-Hardhat', 'NO-Mask', 'NO-Safety Vest', 'Machinery', 'Vehicle', 'Fire', 'Smoke'].includes(className)
 }
 
 function draw() {
@@ -63,21 +69,27 @@ function draw() {
 
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
-  const lineWidth = Math.max(2, canvas.width / 320)
-  const fontSize = Math.max(12, canvas.width / 64)
+  const baseWidth = Math.max(3, canvas.width / 200)
+  const fontSize = Math.max(14, canvas.width / 56)
 
   for (const det of props.detections) {
     const [x1, y1, x2, y2] = det.bbox
     const isViolation = isViolationClass(det.class_name)
     const color = isViolation ? '#F44336' : (CLASS_COLORS[det.class_name] || '#FFFFFF')
+    const lineWidth = isViolation ? baseWidth * 2 : baseWidth
 
     ctx.strokeStyle = color
     ctx.lineWidth = lineWidth
     ctx.strokeRect(x1, y1, x2 - x1, y2 - y1)
 
     if (props.showLabels) {
+      let violationKey = `warning_${det.class_name.toLowerCase().replace(/-/g, '_').replace(/ /g, '_')}`
+      if (det.class_name === 'Machinery') violationKey = 'warning_close_to_machinery'
+      if (det.class_name === 'Vehicle') violationKey = 'warning_close_to_vehicle'
+      if (det.class_name === 'Fire') violationKey = 'warning_fire'
+      if (det.class_name === 'Smoke') violationKey = 'warning_smoke'
       const label = isViolation
-        ? `${VIOLATION_TYPES[`warning_${det.class_name.toLowerCase().replace(/-/g, '_').replace(/ /g, '_')}`] || det.class_name} ${(det.confidence * 100).toFixed(0)}%`
+        ? `${VIOLATION_TYPES[violationKey] || det.class_name} ${(det.confidence * 100).toFixed(0)}%`
         : `${det.class_name} ${(det.confidence * 100).toFixed(0)}%`
 
       ctx.font = `bold ${fontSize}px sans-serif`

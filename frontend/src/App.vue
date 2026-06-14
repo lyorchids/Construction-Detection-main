@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Collection, HomeFilled, Picture, VideoCamera, List } from '@element-plus/icons-vue'
+import { Collection, HomeFilled, Picture, VideoCamera, List, Setting } from '@element-plus/icons-vue'
 </script>
 
 <template>
@@ -37,6 +37,10 @@ import { Collection, HomeFilled, Picture, VideoCamera, List } from '@element-plu
           <el-menu-item index="/cases">
             <el-icon><Collection /></el-icon>
             <span>案例库</span>
+          </el-menu-item>
+          <el-menu-item index="/profiles">
+            <el-icon><Setting /></el-icon>
+            <span>检测配置</span>
           </el-menu-item>
         </el-menu>
       </el-aside>
