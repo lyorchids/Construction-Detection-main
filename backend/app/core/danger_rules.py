@@ -26,6 +26,18 @@ CLASS_NAMES: dict[int, str] = {
     10: 'Vehicle',
 }
 
+VIOLATION_TYPE_LABELS: dict[str, str] = {
+    'warning_no_hardhat': '未戴安全帽',
+    'warning_no_mask': '未佩戴口罩',
+    'warning_no_safety_vest': '未穿反光背心',
+    'warning_close_to_machinery': '靠近作业机械',
+    'warning_close_to_vehicle': '靠近施工车辆',
+    'warning_people_in_controlled_area': '进入锥形桶管控区',
+    'warning_people_in_utility_pole_controlled_area': '进入电线杆管控区',
+    'warning_fire': '检测到火焰',
+    'warning_smoke': '检测到烟雾',
+}
+
 
 class DangerDetector:
     """Detect potential safety hazards based on detection data."""
@@ -51,7 +63,9 @@ class DangerDetector:
         )
 
         required_keys = {
-            'detect_no_safety_vest_or_helmet',
+            'detect_no_hardhat',
+            'detect_no_mask',
+            'detect_no_safety_vest',
             'detect_near_machinery_or_vehicle',
             'detect_in_restricted_area',
             'detect_in_utility_pole_restricted_area',
@@ -101,6 +115,9 @@ class DangerDetector:
         safety_vest_violations = [d for d in datas if d[5] == 4]
         machinery_vehicles = [d for d in datas if d[5] in [8, 10]]
 
+        # Keep all persons for safety-vest check (drivers also need vests)
+        all_persons = list(persons)
+
         # Filter out potential drivers
         if machinery_vehicles:
             persons = [
@@ -110,20 +127,27 @@ class DangerDetector:
                 )
             ]
 
-        # (C) PPE violations
+        # (C1) No-Hardhat
         if (
             not self.detection_items
-            or self.detection_items.get(
-                'detect_no_safety_vest_or_helmet', False,
-            )
+            or self.detection_items.get('detect_no_hardhat', False)
         ):
-            self._check_safety_violations(
-                persons,
-                hardhat_violations,
-                no_mask_violations,
-                safety_vest_violations,
-                warnings,
-                warnings_only,
+            self._check_no_hardhat(hardhat_violations, warnings)
+
+        # (C2) No-Mask
+        if (
+            not self.detection_items
+            or self.detection_items.get('detect_no_mask', False)
+        ):
+            self._check_no_mask(no_mask_violations, warnings_only)
+
+        # (C3) No-Safety Vest — use all_persons (drivers need vests too)
+        if (
+            not self.detection_items
+            or self.detection_items.get('detect_no_safety_vest', False)
+        ):
+            self._check_no_safety_vest(
+                all_persons, safety_vest_violations, warnings_only,
             )
 
         # (D) Proximity violations
@@ -174,12 +198,20 @@ class DangerDetector:
         new_polygons = Utils.detect_polygon_from_cones(datas, self.clusterer)
         polygons.extend(new_polygons)
 
-        people_count = Utils.calculate_people_in_controlled_area(
-            new_polygons, datas,
-        )
-        if people_count > 0:
+        people_objects = []
+        for d in datas:
+            if d[5] == 5:
+                cx = (d[0] + d[2]) / 2.0
+                cy = (d[1] + d[3]) / 2.0
+                pt = Point(cx, cy)
+                for poly in new_polygons:
+                    if poly.contains(pt):
+                        people_objects.append({'bbox': d[:4], 'confidence': d[4]})
+                        break
+        if people_objects:
             warnings['warning_people_in_controlled_area'] = {
-                'count': people_count,
+                'count': len({(o['bbox'][0], o['bbox'][1]) for o in people_objects}),
+                'objects': people_objects,
             }
 
     def _check_pole_restricted_area(
@@ -195,52 +227,66 @@ class DangerDetector:
         if not pole_union_poly.is_empty:
             pole_polygons.append(pole_union_poly)
 
-            count_in_pole_area = Utils.count_people_in_polygon(
-                pole_union_poly, datas,
-            )
-            if count_in_pole_area > 0:
+            people_objects = []
+            for d in datas:
+                if d[5] == 5:
+                    cx = (d[0] + d[2]) / 2.0
+                    cy = (d[1] + d[3]) / 2.0
+                    if pole_union_poly.contains(Point(cx, cy)):
+                        people_objects.append({'bbox': d[:4], 'confidence': d[4]})
+            if people_objects:
                 warnings['warning_people_in_utility_pole_controlled_area'] = {
-                    'count': count_in_pole_area,
+                    'count': len({(o['bbox'][0], o['bbox'][1]) for o in people_objects}),
+                    'objects': people_objects,
                 }
 
-    def _check_safety_violations(
+    def _check_no_hardhat(
         self,
-        persons: list,
         hardhat_violations: list,
-        no_mask_violations: list,
-        safety_vest_violations: list,
         warnings: dict,
+    ) -> None:
+        objects = [
+            {'bbox': v[:4], 'confidence': v[4]}
+            for v in hardhat_violations
+        ]
+        if objects:
+            warnings['warning_no_hardhat'] = {
+                'count': len(objects), 'objects': objects,
+            }
+
+    def _check_no_mask(
+        self,
+        no_mask_violations: list,
         warnings_only: dict,
     ) -> None:
-        """Check for PPE violations among personnel."""
-        no_hardhat_objects = []
-        for v in hardhat_violations:
-            no_hardhat_objects.append({
-                'bbox': v[:4],
-                'confidence': v[4],
-            })
+        objects = [
+            {'bbox': v[:4], 'confidence': v[4]}
+            for v in no_mask_violations
+        ]
+        if objects:
+            warnings_only['warning_no_mask'] = {
+                'count': len(objects), 'objects': objects,
+            }
 
-        no_vest_objects = []
+    def _check_no_safety_vest(
+        self,
+        persons: list,
+        safety_vest_violations: list,
+        warnings_only: dict,
+    ) -> None:
+        objects = []
         for violation in safety_vest_violations:
             if any(
                 Utils.overlap_percentage(violation[:4], p[:4]) > 0.5
                 for p in persons
             ):
-                no_vest_objects.append({
+                objects.append({
                     'bbox': violation[:4],
                     'confidence': violation[4],
                 })
-
-        if no_hardhat_objects:
-            warnings['warning_no_hardhat'] = {
-                'count': len(no_hardhat_objects),
-                'objects': no_hardhat_objects,
-            }
-
-        if no_vest_objects:
+        if objects:
             warnings_only['warning_no_safety_vest'] = {
-                'count': len(no_vest_objects),
-                'objects': no_vest_objects,
+                'count': len(objects), 'objects': objects,
             }
 
     def _check_proximity_violations(
@@ -269,17 +315,29 @@ class DangerDetector:
                         })
 
         if close_to_machinery:
-            unique_machinery = {(p['bbox'][0], p['bbox'][1]) for p in close_to_machinery}
+            seen_m: set = set()
+            unique_machinery = []
+            for o in close_to_machinery:
+                key = (o['bbox'][0], o['bbox'][1])
+                if key not in seen_m:
+                    seen_m.add(key)
+                    unique_machinery.append(o)
             warnings['warning_close_to_machinery'] = {
                 'count': len(unique_machinery),
-                'objects': list(close_to_machinery),
+                'objects': unique_machinery,
             }
 
         if close_to_vehicle:
-            unique_vehicle = {(p['bbox'][0], p['bbox'][1]) for p in close_to_vehicle}
+            seen_v: set = set()
+            unique_vehicle = []
+            for o in close_to_vehicle:
+                key = (o['bbox'][0], o['bbox'][1])
+                if key not in seen_v:
+                    seen_v.add(key)
+                    unique_vehicle.append(o)
             warnings['warning_close_to_vehicle'] = {
                 'count': len(unique_vehicle),
-                'objects': list(close_to_vehicle),
+                'objects': unique_vehicle,
             }
 
     def _check_machinery_near_utility_pole(

@@ -33,8 +33,20 @@ const duration = ref(0)
 const totalObjects = ref(0)
 const totalViolations = ref(0)
 const timelineMarkers = ref<TimelineMarker[]>([])
-const showSafetyVest = ref(true)
-const showAllDetections = ref(false)
+const loadingText = ref('正在连接检测服务...')
+
+// Annotation mode: 'all' = 全部标注, 'config' = 配置标注
+const annotationMode = ref<'all' | 'config'>('all')
+
+// Class filter for "全部标注" mode
+const ALL_CLASS_NAMES = [
+  'Person', 'Hardhat', 'Mask', 'Safety Vest', 'Safety Cone', 'Utility Pole',
+  'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest',
+  'Machinery', 'Vehicle', 'Fire', 'Smoke',
+]
+const displayClasses = ref<Record<string, boolean>>(
+  Object.fromEntries(ALL_CLASS_NAMES.map(n => [n, true])),
+)
 
 const availableModels = ref<Record<string, ModelInfo>>({})
 const selectedModels = ref<Record<string, boolean>>({})
@@ -52,8 +64,12 @@ const dangerRules = ref({
 })
 
 // Video-specific settings
-const frameInterval = ref(10)
+const detectionInterval = ref(1.0)
 const saveScreenshots = ref(true)
+
+// Polygon overlays
+const conePolygons = ref<number[][][]>([])
+const polePolygons = ref<number[][][]>([])
 
 // Profile state
 const profiles = ref<DetectionProfile[]>([])
@@ -77,7 +93,7 @@ onMounted(async () => {
     availableModels.value = data.models || {}
     for (const key of Object.keys(data.models || {})) {
       selectedModels.value[key] = true
-      modelThresholds.value[key] = 0.25
+      modelThresholds.value[key] = key === 'fire' ? 0.5 : 0.25
     }
   } catch {
     availableModels.value = {
@@ -85,7 +101,7 @@ onMounted(async () => {
       fire: { name: '火情烟雾检测', classes: {}, danger_rules: false },
     }
     selectedModels.value = { ppe: true, fire: true }
-    modelThresholds.value = { ppe: 0.25, fire: 0.25 }
+    modelThresholds.value = { ppe: 0.25, fire: 0.5 }
   }
   await loadProfiles()
 })
@@ -131,7 +147,8 @@ function applyProfile(profile: DetectionProfile) {
   if (ppe?.danger_rules) {
     dangerRules.value = { ...dangerRules.value, ...compatRules(ppe.danger_rules) }
   }
-  if (cfg.frame_interval != null) frameInterval.value = cfg.frame_interval
+  if (cfg.detection_interval != null) detectionInterval.value = cfg.detection_interval
+  else if (cfg.frame_interval != null) detectionInterval.value = Math.max(0.5, cfg.frame_interval / 30)
   if (cfg.save_screenshots != null) saveScreenshots.value = cfg.save_screenshots
 }
 
@@ -163,29 +180,14 @@ const selectedModelKeys = computed(() =>
     .map(([k]) => k),
 )
 
-const filteredViolations = computed(() => {
-  if (showAllDetections.value) return violations.value
-  if (showSafetyVest.value) return violations.value
-  return violations.value.filter((v: any) => !['warning_no_safety_vest', 'warning_no_mask'].includes(v.type))
-})
+const filteredViolations = computed(() => violations.value)
 
 const filteredDetections = computed(() => {
-  if (showAllDetections.value) return detections.value
-
-  const activeTypes = new Set(filteredViolations.value.map((v: any) => v.type))
-
-  return detections.value.filter((d: any) => {
-    if (d.class_name === 'Person') return true
-    if (d.class_name === 'Hardhat') return true
-    if (d.class_name === 'Fire') return true
-    if (d.class_name === 'Smoke') return true
-    if (d.class_name === 'NO-Hardhat') return activeTypes.has('warning_no_hardhat')
-    if (d.class_name === 'NO-Mask') return activeTypes.has('warning_no_mask')
-    if (d.class_name === 'NO-Safety Vest') return activeTypes.has('warning_no_safety_vest')
-    if (d.class_name === 'Machinery') return activeTypes.has('warning_close_to_machinery')
-    if (d.class_name === 'Vehicle') return activeTypes.has('warning_close_to_vehicle')
-    return false
-  })
+  if (annotationMode.value === 'all') {
+    return detections.value.filter((d: any) => displayClasses.value[d.class_name])
+  }
+  // config mode: only Person + active violation targets
+  return detections.value.filter((d: any) => d.class_name === 'Person' || d.is_violation)
 })
 
 watch(violations, (newViolations) => {
@@ -299,6 +301,10 @@ function connectWebSocket() {
     return
   }
 
+  // Show loading immediately
+  isDetecting.value = true
+  wsConnected.value = false
+  loadingText.value = '正在连接检测服务...'
   timelineMarkers.value = []
   const encodedPath = encodeURIComponent(filePath.value)
   const wsUrl = `ws://${window.location.host}/ws/video/detect/${encodedPath}`
@@ -307,7 +313,6 @@ function connectWebSocket() {
 
   ws.value.onopen = () => {
     wsConnected.value = true
-    isDetecting.value = true
     const thresholds: Record<string, number> = {}
     for (const key of selectedModelKeys.value) {
       thresholds[key] = modelThresholds.value[key] ?? 0.25
@@ -317,7 +322,7 @@ function connectWebSocket() {
       models: selectedModelKeys.value,
       thresholds,
       danger_rules: dangerRules.value,
-      frame_interval: frameInterval.value,
+      detection_interval: detectionInterval.value,
       save_screenshots: saveScreenshots.value,
     }))
   }
@@ -328,10 +333,13 @@ function connectWebSocket() {
     if (data.type === 'info') {
       totalFrames.value = data.total_frames
       duration.value = data.duration
+      loadingText.value = '视频已加载，正在初始化检测...'
     } else if (data.type === 'frame') {
       currentFrame.value = data.image
       detections.value = data.detections
       violations.value = data.violations
+      conePolygons.value = data.cone_polygons || []
+      polePolygons.value = data.pole_polygons || []
       frameNumber.value = data.frame_number
       timestamp.value = data.timestamp
 
@@ -432,7 +440,7 @@ onUnmounted(() => {
         <span class="config-tag" :class="{ on: selectedModels.ppe }">PPE</span>
         <span v-if="selectedModels.ppe" class="config-sub">({{ dangerRules.detect_no_hardhat ? '安全帽' : '' }}{{ dangerRules.detect_no_mask ? '口罩' : '' }}{{ dangerRules.detect_no_safety_vest ? '背心' : '' }}{{ dangerRules.detect_near_machinery_or_vehicle ? '机械' : '' }}{{ dangerRules.detect_in_restricted_area ? '锥形桶' : '' }})</span>
         <span class="config-tag" :class="{ on: selectedModels.fire }">Fire</span>
-        <span class="config-tag">{{ frameInterval }}帧</span>
+        <span class="config-tag">{{ detectionInterval }}s</span>
         <el-button link size="small" @click="configExpanded = !configExpanded" style="margin-left: auto">
           {{ configExpanded ? '收起' : '展开' }}详细配置
         </el-button>
@@ -468,9 +476,9 @@ onUnmounted(() => {
           <!-- Video-specific settings -->
           <div class="video-params-row" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0">
             <div class="param-item">
-              <span class="param-label">帧检测间隔:</span>
-              <el-slider v-model="frameInterval" :min="1" :max="60" :step="1" size="small" style="width: 200px" />
-              <span class="threshold-label">{{ frameInterval }} 帧</span>
+              <span class="param-label">检测间隔:</span>
+              <el-slider v-model="detectionInterval" :min="0.5" :max="10" :step="0.5" size="small" style="width: 200px" />
+              <span class="threshold-label">{{ detectionInterval }} 秒</span>
             </div>
             <div class="param-item">
               <span class="param-label">保存违规截图:</span>
@@ -482,8 +490,25 @@ onUnmounted(() => {
     </el-card>
 
     <div class="page-toolbar">
-      <el-switch v-model="showAllDetections" active-text="完整标注" inactive-text="精简标注" size="small" />
+      <el-radio-group v-model="annotationMode" size="small">
+        <el-radio-button value="all">全部标注</el-radio-button>
+        <el-radio-button value="config">配置标注</el-radio-button>
+      </el-radio-group>
     </div>
+
+    <!-- Class filter for "全部标注" mode -->
+    <el-collapse-transition>
+      <div v-if="annotationMode === 'all' && currentFrame" class="class-filter-bar">
+        <span class="class-filter-label">显示类别:</span>
+        <el-checkbox
+          v-for="cn in ALL_CLASS_NAMES"
+          :key="cn"
+          v-model="displayClasses[cn]"
+          size="small"
+          :label="cn"
+        />
+      </div>
+    </el-collapse-transition>
     <el-row :gutter="20">
       <el-col :span="18">
         <el-card>
@@ -491,7 +516,8 @@ onUnmounted(() => {
             <span style="font-weight: 600">🎥 视频实时检测</span>
           </template>
 
-          <div v-if="!currentFrame">
+          <!-- Upload area (no video, not detecting) -->
+          <div v-if="!currentFrame && !isDetecting">
             <el-upload
               drag
               :auto-upload="false"
@@ -508,6 +534,12 @@ onUnmounted(() => {
             </el-upload>
           </div>
 
+          <!-- Loading state (detecting, first frame not yet arrived) -->
+          <div v-else-if="!currentFrame && isDetecting" class="loading-placeholder">
+            <el-icon class="loading-spinner" :size="48"><Loading /></el-icon>
+            <p class="loading-text">{{ loadingText }}</p>
+          </div>
+
           <template v-else>
             <div
               class="image-wrapper"
@@ -517,6 +549,8 @@ onUnmounted(() => {
               :image="currentFrame"
               :detections="filteredDetections"
               :violations="filteredViolations"
+              :cone-polygons="conePolygons"
+              :pole-polygons="polePolygons"
               :show-labels="true"
             />
             <div v-if="filteredViolations.length > 0" class="violation-overlay" />
@@ -540,7 +574,6 @@ onUnmounted(() => {
                 >
                   ⏹ 停止
                 </el-button>
-                <el-switch v-if="!showAllDetections" v-model="showSafetyVest" active-text="安全背心" size="small" />
                 <el-tag v-if="wsConnected" type="success" effect="dark" size="small">● 已连接</el-tag>
                 <el-tag v-else-if="!isDetecting && filePath" type="info" size="small">● 未开始</el-tag>
               </div>
@@ -559,7 +592,6 @@ onUnmounted(() => {
           </template>
         </el-card>
 
-        <ViolationWarning v-if="filteredViolations.length > 0" :violations="filteredViolations" />
       </el-col>
 
       <el-col :span="6">
@@ -833,6 +865,7 @@ onUnmounted(() => {
 }
 .image-wrapper {
   position: relative;
+  overflow: hidden;
 }
 .drawer-summary {
   font-size: 13px;
@@ -937,5 +970,45 @@ onUnmounted(() => {
 @keyframes overlay-breathe {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
+}
+.class-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid #f0f0f0;
+}
+.class-filter-label {
+  font-size: 12px;
+  color: #666;
+  white-space: nowrap;
+  margin-right: 4px;
+}
+.class-filter-bar :deep(.el-checkbox__label) {
+  font-size: 12px;
+}
+.loading-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 0;
+  color: #999;
+}
+.loading-spinner {
+  animation: spin 1.5s linear infinite;
+}
+.loading-text {
+  margin-top: 20px;
+  font-size: 15px;
+  color: #666;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 </style>

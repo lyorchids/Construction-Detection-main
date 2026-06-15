@@ -53,6 +53,12 @@ def get_records(
             total_objects=r.total_objects,
             violation_count=r.violation_count,
             duration=r.duration,
+            v_no_hardhat=r.v_no_hardhat,
+            v_no_safety_vest=r.v_no_safety_vest,
+            v_close_to_machinery=r.v_close_to_machinery,
+            v_close_to_vehicle=r.v_close_to_vehicle,
+            v_in_controlled_area=r.v_in_controlled_area,
+            v_in_pole_area=r.v_in_pole_area,
         )
         for r in records
     ]
@@ -80,6 +86,12 @@ def get_record(record_id: int, db: Session = Depends(get_db)):
         total_objects=record.total_objects,
         violation_count=record.violation_count,
         duration=record.duration,
+        v_no_hardhat=record.v_no_hardhat,
+        v_no_safety_vest=record.v_no_safety_vest,
+        v_close_to_machinery=record.v_close_to_machinery,
+        v_close_to_vehicle=record.v_close_to_vehicle,
+        v_in_controlled_area=record.v_in_controlled_area,
+        v_in_pole_area=record.v_in_pole_area,
     )
 
 

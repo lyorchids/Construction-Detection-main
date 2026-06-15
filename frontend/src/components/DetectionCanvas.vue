@@ -9,6 +9,8 @@ interface Detection {
   track_id: number | null
   is_moving: boolean
   source_model?: string
+  is_violation?: boolean
+  violation_labels?: string[]
 }
 
 interface Violation {
@@ -20,6 +22,8 @@ const props = defineProps<{
   image: string
   detections: Detection[]
   violations: Violation[]
+  conePolygons?: number[][][]
+  polePolygons?: number[][][]
   showLabels: boolean
 }>()
 
@@ -28,18 +32,32 @@ const imgRef = ref<HTMLImageElement | null>(null)
 
 const VIOLATION_TYPES: Record<string, string> = {
   warning_no_hardhat: '⚠ 未戴安全帽',
+  warning_no_mask: '⚠ 未戴口罩',
   warning_no_safety_vest: '⚠ 未穿反光背心',
   warning_close_to_machinery: '⚠ 靠近作业机械',
   warning_close_to_vehicle: '⚠ 靠近施工车辆',
   warning_people_in_controlled_area: '⚠ 进入管控区',
+  warning_people_in_utility_pole_controlled_area: '⚠ 进入电线杆管控区',
   warning_fire: '🔥 火焰',
   warning_smoke: '💨 烟雾',
+}
+
+const VIOLATION_COLORS: Record<string, string> = {
+  warning_no_hardhat: '#F44336',
+  warning_no_mask: '#FF9800',
+  warning_no_safety_vest: '#FF9800',
+  warning_close_to_machinery: '#9C27B0',
+  warning_close_to_vehicle: '#00BCD4',
+  warning_people_in_controlled_area: '#FFC107',
+  warning_people_in_utility_pole_controlled_area: '#795548',
+  warning_fire: '#D32F2F',
+  warning_smoke: '#9E9E9E',
 }
 
 const CLASS_COLORS: Record<string, string> = {
   Hardhat: '#2196F3',
   Mask: '#4CAF50',
-  'NO-Hardhat': '#F44336',
+  'NO-Hardhat': '#FF5722',
   'NO-Mask': '#FF9800',
   'NO-Safety Vest': '#FF9800',
   Person: '#4CAF50',
@@ -50,10 +68,6 @@ const CLASS_COLORS: Record<string, string> = {
   Vehicle: '#00BCD4',
   Fire: '#FF5722',
   Smoke: '#9E9E9E',
-}
-
-function isViolationClass(className: string): boolean {
-  return ['NO-Hardhat', 'NO-Mask', 'NO-Safety Vest', 'Machinery', 'Vehicle', 'Fire', 'Smoke'].includes(className)
 }
 
 function draw() {
@@ -69,27 +83,61 @@ function draw() {
 
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
+  // Draw cone polygons (semi-transparent yellow)
+  if (props.conePolygons) {
+    for (const poly of props.conePolygons) {
+      if (poly.length < 3) continue
+      ctx.beginPath()
+      ctx.moveTo(poly[0][0], poly[0][1])
+      for (let i = 1; i < poly.length; i++) {
+        ctx.lineTo(poly[i][0], poly[i][1])
+      }
+      ctx.closePath()
+      ctx.fillStyle = 'rgba(255, 235, 59, 0.25)'
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(255, 235, 59, 0.7)'
+      ctx.lineWidth = 2
+      ctx.stroke()
+    }
+  }
+
+  // Draw pole polygons (semi-transparent purple)
+  if (props.polePolygons) {
+    for (const poly of props.polePolygons) {
+      if (poly.length < 3) continue
+      ctx.beginPath()
+      ctx.moveTo(poly[0][0], poly[0][1])
+      for (let i = 1; i < poly.length; i++) {
+        ctx.lineTo(poly[i][0], poly[i][1])
+      }
+      ctx.closePath()
+      ctx.fillStyle = 'rgba(156, 39, 176, 0.20)'
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(156, 39, 176, 0.6)'
+      ctx.lineWidth = 2
+      ctx.stroke()
+    }
+  }
+
   const baseWidth = Math.max(3, canvas.width / 200)
   const fontSize = Math.max(14, canvas.width / 56)
 
   for (const det of props.detections) {
     const [x1, y1, x2, y2] = det.bbox
-    const isViolation = isViolationClass(det.class_name)
-    const color = isViolation ? '#F44336' : (CLASS_COLORS[det.class_name] || '#FFFFFF')
-    const lineWidth = isViolation ? baseWidth * 2 : baseWidth
+    const vl = det.violation_labels?.filter(Boolean) ?? []
+    const isViolation = !!(det.is_violation && vl.length > 0)
+    const color = isViolation
+      ? (VIOLATION_COLORS[vl[0]] || '#F44336')
+      : (CLASS_COLORS[det.class_name] || '#FFFFFF')
+    const lineWidth = isViolation ? baseWidth * 3 : baseWidth
 
     ctx.strokeStyle = color
     ctx.lineWidth = lineWidth
     ctx.strokeRect(x1, y1, x2 - x1, y2 - y1)
 
     if (props.showLabels) {
-      let violationKey = `warning_${det.class_name.toLowerCase().replace(/-/g, '_').replace(/ /g, '_')}`
-      if (det.class_name === 'Machinery') violationKey = 'warning_close_to_machinery'
-      if (det.class_name === 'Vehicle') violationKey = 'warning_close_to_vehicle'
-      if (det.class_name === 'Fire') violationKey = 'warning_fire'
-      if (det.class_name === 'Smoke') violationKey = 'warning_smoke'
       const label = isViolation
-        ? `${VIOLATION_TYPES[violationKey] || det.class_name} ${(det.confidence * 100).toFixed(0)}%`
+        ? `${vl.map(t => VIOLATION_TYPES[t] || t).join(' | ')} ${(det.confidence * 100).toFixed(0)}%`
         : `${det.class_name} ${(det.confidence * 100).toFixed(0)}%`
 
       ctx.font = `bold ${fontSize}px sans-serif`
@@ -105,7 +153,7 @@ function draw() {
   }
 }
 
-watch(() => [props.image, props.detections], () => {
+watch(() => [props.image, props.detections, props.conePolygons, props.polePolygons], () => {
   if (props.image) {
     const img = new Image()
     img.onload = () => {
@@ -129,5 +177,5 @@ onMounted(() => {
 </script>
 
 <template>
-  <canvas ref="canvasRef" style="width: 100%; height: auto; display: block; border-radius: 4px" />
+  <canvas ref="canvasRef" style="width: 100%; max-width: 100%; height: auto; display: block; border-radius: 4px" />
 </template>

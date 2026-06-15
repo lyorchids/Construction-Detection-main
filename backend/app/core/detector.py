@@ -36,6 +36,7 @@ class DetectionResult:
     class_name: str
     track_id: int | None = None
     is_moving: bool = False
+    source_model: str = ''
 
 
 def _nms_deduplicate(
@@ -104,6 +105,7 @@ class YOLODetector:
         device: str = 'cpu',
         movement_thr: float = 40.0,
         max_id_keep: int = 10,
+        class_names: dict[int, str] | None = None,
     ) -> None:
         """Initialise the YOLO detector.
 
@@ -112,12 +114,14 @@ class YOLODetector:
             device: Device to run inference on ('cpu' or 'cuda:0').
             movement_thr: Pixel movement threshold for tracking.
             max_id_keep: Frames to retain inactive track IDs.
+            class_names: Optional class ID to name mapping. Defaults to module-level CLASS_NAMES.
         """
         self.model_path = model_path
         self.device = device
         self.movement_thr = movement_thr
         self.movement_thr_sq = movement_thr * movement_thr
         self.max_id_keep = max_id_keep
+        self.class_names = class_names if class_names is not None else CLASS_NAMES
 
         self.model = self._load_model()
 
@@ -152,11 +156,13 @@ class YOLODetector:
     def detect_image(
         self,
         image: np.ndarray,
+        conf_threshold: float = 0.25,
     ) -> list[DetectionResult]:
         """Run detection on a single image.
 
         Args:
             image: Input image as numpy array (BGR format).
+            conf_threshold: Confidence threshold to filter detections.
 
         Returns:
             List of DetectionResult objects.
@@ -173,10 +179,13 @@ class YOLODetector:
 
         detections: list[DetectionResult] = []
         for i in range(len(boxes)):
-            bbox = [float(x) for x in xyxy_batch[i]]
             conf = float(conf_batch[i])
+            if conf < conf_threshold:
+                continue
+
+            bbox = [float(x) for x in xyxy_batch[i]]
             cls_id = int(cls_batch[i])
-            class_name = CLASS_NAMES.get(cls_id, f'Unknown({cls_id})')
+            class_name = self.class_names.get(cls_id, f'Unknown({cls_id})')
 
             detections.append(
                 DetectionResult(
@@ -192,11 +201,13 @@ class YOLODetector:
     def detect_image_with_tracking(
         self,
         image: np.ndarray,
+        conf_threshold: float = 0.25,
     ) -> tuple[list[DetectionResult], list[DetectionResult]]:
         """Run detection on a single image (for image detection endpoint).
 
         Args:
             image: Input image as numpy array (BGR format).
+            conf_threshold: Confidence threshold to filter detections.
 
         Returns:
             Tuple of (raw_detections, tracked_detections).
@@ -217,10 +228,13 @@ class YOLODetector:
         tracked_detections: list[DetectionResult] = []
 
         for i in range(len(boxes)):
-            bbox = [float(x) for x in xyxy_batch[i]]
             conf = float(conf_batch[i])
+            if conf < conf_threshold:
+                continue
+
+            bbox = [float(x) for x in xyxy_batch[i]]
             cls_id = int(cls_batch[i])
-            class_name = CLASS_NAMES.get(cls_id, f'Unknown({cls_id})')
+            class_name = self.class_names.get(cls_id, f'Unknown({cls_id})')
 
             raw_detections.append(
                 DetectionResult(
@@ -248,11 +262,13 @@ class YOLODetector:
     def detect_frame(
         self,
         frame: np.ndarray,
+        conf_threshold: float = 0.25,
     ) -> tuple[list[DetectionResult], list[DetectionResult]]:
         """Run detection with tracking on a single frame.
 
         Args:
             frame: Input frame as numpy array (BGR format).
+            conf_threshold: Confidence threshold to filter detections.
 
         Returns:
             Tuple of (raw_detections, tracked_detections).
@@ -282,10 +298,13 @@ class YOLODetector:
         tracked_detections: list[DetectionResult] = []
 
         for i in range(len(boxes)):
-            bbox = [float(x) for x in xyxy_batch[i]]
             conf = float(conf_batch[i])
+            if conf < conf_threshold:
+                continue
+
+            bbox = [float(x) for x in xyxy_batch[i]]
             cls_id = int(cls_batch[i])
-            class_name = CLASS_NAMES.get(cls_id, f'Unknown({cls_id})')
+            class_name = self.class_names.get(cls_id, f'Unknown({cls_id})')
             track_id = (
                 int(ids[i])
                 if ids is not None and ids[i] is not None

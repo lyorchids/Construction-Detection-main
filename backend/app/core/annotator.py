@@ -18,6 +18,20 @@ VIOLATION_LEVELS: dict[str, str] = {
     'warning_close_to_machinery': 'medium',
     'warning_close_to_vehicle': 'medium',
     'warning_no_safety_vest': 'low',
+    'warning_no_mask': 'low',
+}
+
+# 违规类型 → 中文标签（用于截图标注）
+VIOLATION_LABELS_CN: dict[str, str] = {
+    'warning_no_hardhat': '未戴安全帽',
+    'warning_no_mask': '未戴口罩',
+    'warning_no_safety_vest': '未穿反光背心',
+    'warning_close_to_machinery': '靠近机械',
+    'warning_close_to_vehicle': '靠近车辆',
+    'warning_people_in_controlled_area': '进入锥形桶管控区',
+    'warning_people_in_utility_pole_controlled_area': '进入电线杆管控区',
+    'warning_fire': '火焰',
+    'warning_smoke': '烟雾',
 }
 
 
@@ -66,7 +80,8 @@ def draw_annotations(
             x1, y1, x2, y2 = map(int, bbox[:4])
             conf = obj.get('confidence', 0)
             cv2.rectangle(img, (x1, y1), (x2, y2), color, 3)
-            label = f'{vtype} {conf:.2f}'
+            cn_label = VIOLATION_LABELS_CN.get(vtype, vtype)
+            label = f'{cn_label} {conf:.2f}'
             cv2.putText(
                 img, label, (x1, y1 - 8),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2,

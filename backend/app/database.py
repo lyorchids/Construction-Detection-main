@@ -29,4 +29,5 @@ def get_db():
 
 def init_db():
     Path('data').mkdir(exist_ok=True)
+    import app.models.detection_profile  # noqa: F401 — register DetectionProfile
     Base.metadata.create_all(bind=engine)

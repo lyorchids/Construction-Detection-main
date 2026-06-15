@@ -114,7 +114,7 @@ async function handleDelete(profile: DetectionProfile) {
           <template #default="{ row }">
             <template v-if="row.type === 'video' && row.config">
               <span style="font-size: 12px; color: #666">
-                间隔: {{ row.config.frame_interval || 1 }}帧
+                间隔: {{ row.config.detection_interval || 1 }}s
                 <template v-if="row.config.save_screenshots"> | 截图</template>
               </span>
             </template>

@@ -22,8 +22,19 @@ const currentFrame = ref('')
 const detections = ref<any[]>([])
 const violations = ref<any[]>([])
 const totalObjects = ref(0)
-const showSafetyVest = ref(true)
-const showAllDetections = ref(false)
+
+// Annotation mode: 'all' = 全部标注, 'config' = 配置标注
+const annotationMode = ref<'all' | 'config'>('all')
+
+// Class filter for "全部标注" mode
+const ALL_CLASS_NAMES = [
+  'Person', 'Hardhat', 'Mask', 'Safety Vest', 'Safety Cone', 'Utility Pole',
+  'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest',
+  'Machinery', 'Vehicle', 'Fire', 'Smoke',
+]
+const displayClasses = ref<Record<string, boolean>>(
+  Object.fromEntries(ALL_CLASS_NAMES.map(n => [n, true])),
+)
 
 const availableModels = ref<Record<string, ModelInfo>>({})
 const selectedModels = ref<Record<string, boolean>>({})
@@ -39,6 +50,10 @@ const dangerRules = ref({
   detect_in_utility_pole_restricted_area: false,
   detect_machinery_close_to_pole: false,
 })
+
+// Polygon overlays
+const conePolygons = ref<number[][][]>([])
+const polePolygons = ref<number[][][]>([])
 
 // Collapsible config
 const configExpanded = ref(false)
@@ -82,29 +97,14 @@ const selectedModelKeys = computed(() =>
     .map(([k]) => k),
 )
 
-const filteredViolations = computed(() => {
-  if (showAllDetections.value) return violations.value
-  if (showSafetyVest.value) return violations.value
-  return violations.value.filter((v: any) => !['warning_no_safety_vest', 'warning_no_mask'].includes(v.type))
-})
+const filteredViolations = computed(() => violations.value)
 
 const filteredDetections = computed(() => {
-  if (showAllDetections.value) return detections.value
-
-  const activeTypes = new Set(filteredViolations.value.map((v: any) => v.type))
-
-  return detections.value.filter((d: any) => {
-    if (d.class_name === 'Person') return true
-    if (d.class_name === 'Hardhat') return true
-    if (d.class_name === 'Fire') return true
-    if (d.class_name === 'Smoke') return true
-    if (d.class_name === 'NO-Hardhat') return activeTypes.has('warning_no_hardhat')
-    if (d.class_name === 'NO-Mask') return activeTypes.has('warning_no_mask')
-    if (d.class_name === 'NO-Safety Vest') return activeTypes.has('warning_no_safety_vest')
-    if (d.class_name === 'Machinery') return activeTypes.has('warning_close_to_machinery')
-    if (d.class_name === 'Vehicle') return activeTypes.has('warning_close_to_vehicle')
-    return false
-  })
+  if (annotationMode.value === 'all') {
+    return detections.value.filter((d: any) => displayClasses.value[d.class_name])
+  }
+  // config mode: only Person + active violation targets
+  return detections.value.filter((d: any) => d.class_name === 'Person' || d.is_violation)
 })
 
 const VIOLATION_LABELS: Record<string, string> = {
@@ -205,6 +205,8 @@ async function detectImage(filePath: string) {
     currentFrame.value = data.image
     detections.value = data.detections
     violations.value = data.violations
+    conePolygons.value = data.cone_polygons || []
+    polePolygons.value = data.pole_polygons || []
     totalObjects.value = data.total_objects
 
     if (data.violations.length > 0) {
@@ -304,8 +306,25 @@ function reset() {
     </el-card>
 
     <div class="page-toolbar">
-      <el-switch v-model="showAllDetections" active-text="完整标注" inactive-text="精简标注" size="small" />
+      <el-radio-group v-model="annotationMode" size="small">
+        <el-radio-button value="all">全部标注</el-radio-button>
+        <el-radio-button value="config">配置标注</el-radio-button>
+      </el-radio-group>
     </div>
+
+    <!-- Class filter for "全部标注" mode -->
+    <el-collapse-transition>
+      <div v-if="annotationMode === 'all' && currentFrame" class="class-filter-bar">
+        <span class="class-filter-label">显示类别:</span>
+        <el-checkbox
+          v-for="cn in ALL_CLASS_NAMES"
+          :key="cn"
+          v-model="displayClasses[cn]"
+          size="small"
+          :label="cn"
+        />
+      </div>
+    </el-collapse-transition>
     <el-row :gutter="20">
       <el-col :span="16">
         <el-card>
@@ -313,12 +332,6 @@ function reset() {
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span>图片检测结果</span>
               <div style="display: flex; align-items: center; gap: 12px">
-                <el-switch
-                  v-if="currentFrame && !showAllDetections"
-                  v-model="showSafetyVest"
-                  active-text="安全背心"
-                  size="small"
-                />
                 <el-button v-if="currentFrame" size="small" @click="reset">重新上传</el-button>
               </div>
             </div>
@@ -327,12 +340,13 @@ function reset() {
           <div
             v-if="currentFrame"
             class="image-wrapper"
-            :class="{ 'violation-active': filteredViolations.length > 0 }"
           >
             <DetectionCanvas
               :image="currentFrame"
               :detections="filteredDetections"
               :violations="filteredViolations"
+              :cone-polygons="conePolygons"
+              :pole-polygons="polePolygons"
               :show-labels="true"
             />
           </div>
@@ -364,19 +378,10 @@ function reset() {
             />
           </div>
         </el-card>
-
-        <ViolationWarning v-if="filteredViolations.length > 0" :violations="filteredViolations" />
       </el-col>
 
       <el-col :span="8">
-        <el-card style="margin-bottom: 20px">
-          <template #header>检测统计</template>
-          <el-descriptions :column="1" border>
-            <el-descriptions-item label="目标数">{{ totalObjects }}</el-descriptions-item>
-            <el-descriptions-item label="违规数">{{ filteredViolations.length }}</el-descriptions-item>
-          </el-descriptions>
-        </el-card>
-
+        <ViolationWarning v-if="filteredViolations.length > 0" :violations="filteredViolations" />
       </el-col>
     </el-row>
 
@@ -475,33 +480,25 @@ function reset() {
   overflow: hidden;
 }
 
-.image-wrapper.violation-active {
-  box-shadow:
-    0 0 0 3px rgba(244, 67, 54, 0.6),
-    0 0 25px rgba(244, 67, 54, 0.25);
-  animation: card-pulse 2s ease-in-out infinite;
+.class-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: #fafafa;
+  border-radius: 6px;
+  border: 1px solid #f0f0f0;
+}
+.class-filter-label {
+  font-size: 12px;
+  color: #666;
+  white-space: nowrap;
+  margin-right: 4px;
+}
+.class-filter-bar :deep(.el-checkbox__label) {
+  font-size: 12px;
 }
 
-.image-wrapper.violation-active::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 50%;
-  background: rgba(255, 0, 0, 0.1);
-  pointer-events: none;
-  z-index: 10;
-  animation: overlay-pulse 2s ease-in-out infinite;
-}
-
-@keyframes card-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(244, 67, 54, 0.6), 0 0 20px rgba(244, 67, 54, 0.2); }
-  50% { box-shadow: 0 0 0 3px rgba(244, 67, 54, 0.8), 0 0 40px rgba(244, 67, 54, 0.35); }
-}
-
-@keyframes overlay-pulse {
-  0%, 100% { background: rgba(255, 0, 0, 0.08); }
-  50% { background: rgba(255, 0, 0, 0.15); }
-}
 </style>

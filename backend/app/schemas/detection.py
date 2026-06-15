@@ -19,6 +19,12 @@ class RecordResponse(BaseModel):
     total_objects: int
     violation_count: int
     duration: float
+    v_no_hardhat: int = 0
+    v_no_safety_vest: int = 0
+    v_close_to_machinery: int = 0
+    v_close_to_vehicle: int = 0
+    v_in_controlled_area: int = 0
+    v_in_pole_area: int = 0
 
 
 class ViolationResponse(BaseModel):

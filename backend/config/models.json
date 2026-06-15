@@ -1,0 +1,37 @@
+{
+  "models": {
+    "ppe": {
+      "name": "安全PPE检测",
+      "path": "models/yolo26l.pt",
+      "device": "cuda:0",
+      "classes": {
+        "0": "Hardhat",
+        "1": "Mask",
+        "2": "NO-Hardhat",
+        "3": "NO-Mask",
+        "4": "NO-Safety Vest",
+        "5": "Person",
+        "6": "Safety Cone",
+        "7": "Safety Vest",
+        "8": "Machinery",
+        "9": "Utility Pole",
+        "10": "Vehicle"
+      },
+      "danger_rules": true
+    },
+    "fire": {
+      "name": "火情烟雾检测",
+      "path": "models/fire_smoke.pt",
+      "device": "cuda:0",
+      "classes": {
+        "0": "Fire",
+        "1": "Smoke"
+      },
+      "danger_rules": false,
+      "violation_types": {
+        "Fire": "warning_fire",
+        "Smoke": "warning_smoke"
+      }
+    }
+  }
+}

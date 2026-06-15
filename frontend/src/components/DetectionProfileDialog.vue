@@ -31,7 +31,7 @@ const form = ref({
   dangerRestrictedArea: true,
   dangerPoleArea: false,
   dangerMachineryPole: false,
-  frameInterval: 10,
+  detectionInterval: 1.0,
   saveScreenshots: true,
 })
 
@@ -73,7 +73,7 @@ watch(() => props.profile, (p) => {
       dangerRestrictedArea: rules.detect_in_restricted_area ?? true,
       dangerPoleArea: rules.detect_in_utility_pole_restricted_area ?? false,
       dangerMachineryPole: rules.detect_machinery_close_to_pole ?? false,
-      frameInterval: cfg.frame_interval ?? 10,
+      detectionInterval: cfg.detection_interval ?? (cfg.frame_interval ? Math.max(0.5, cfg.frame_interval / 30) : 1.0),
       saveScreenshots: cfg.save_screenshots ?? true,
     }
   } else {
@@ -92,7 +92,7 @@ watch(() => props.profile, (p) => {
       dangerRestrictedArea: true,
       dangerPoleArea: false,
       dangerMachineryPole: false,
-      frameInterval: 10,
+      detectionInterval: 1.0,
       saveScreenshots: true,
     }
   }
@@ -124,7 +124,7 @@ function buildConfig() {
   }
   const cfg: any = { models }
   if (form.value.type === 'video') {
-    cfg.frame_interval = form.value.frameInterval
+    cfg.detection_interval = form.value.detectionInterval
     cfg.save_screenshots = form.value.saveScreenshots
   }
   return cfg
@@ -221,10 +221,10 @@ watch(visible, (v) => { emit('update:modelValue', v) })
         <el-divider content-position="left">视频参数</el-divider>
         <el-row :gutter="16">
           <el-col :span="12">
-            <el-form-item label="帧检测间隔">
+            <el-form-item label="检测间隔">
               <div class="threshold-row">
-                <el-slider v-model="form.frameInterval" :min="1" :max="60" :step="1" size="small" style="width: 160px" />
-                <span class="threshold-label">{{ form.frameInterval }} 帧</span>
+                <el-slider v-model="form.detectionInterval" :min="0.5" :max="10" :step="0.5" size="small" style="width: 160px" />
+                <span class="threshold-label">{{ form.detectionInterval }} 秒</span>
               </div>
             </el-form-item>
           </el-col>
