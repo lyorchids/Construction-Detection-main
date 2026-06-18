@@ -68,6 +68,7 @@ async def websocket_detect(websocket: WebSocket, file_path: str):
                 models = data.get('models', ['ppe'])
                 thresholds = data.get('thresholds', {})
                 danger_rules_raw = data.get('danger_rules')
+                every_frame = data.get('every_frame', False)
                 detection_interval = data.get('detection_interval', 1.0)
                 save_screenshots = data.get('save_screenshots', True)
 
@@ -89,7 +90,7 @@ async def websocket_detect(websocket: WebSocket, file_path: str):
                 streamer.danger_detector = danger_detector
                 streamer.models = models
                 streamer.thresholds = thresholds
-                streamer.detection_interval = max(0.5, float(detection_interval))
+                streamer.detection_interval = 0.0 if every_frame else max(0.5, float(detection_interval))
                 streamer.save_screenshots = bool(save_screenshots)
                 is_streaming = True
                 await streamer.stream(decoded_path, websocket)

@@ -31,27 +31,6 @@ def test_danger_detector() -> None:
 
     print("\nAll assertions passed!")
 
-
-def test_proximity_violation() -> None:
-    """Test proximity detection."""
-    detector = DangerDetector()
-
-    # Person close to machinery
-    data: list[list[float]] = [
-        [100, 100, 120, 200, 0.90, 5],    # Person
-        [130, 100, 200, 200, 0.85, 8],    # Machinery nearby
-    ]
-
-    warnings, _, _ = detector.detect_danger(data)
-    print("\n=== Proximity Test ===\n")
-    print(f"Warnings: {warnings}")
-
-    if 'warning_close_to_machinery' in warnings:
-        print("Proximity warning triggered correctly!")
-    else:
-        print("No proximity warning (person may be too far)")
-
-
 def test_empty_data() -> None:
     """Test with empty data."""
     detector = DangerDetector()
@@ -65,6 +44,5 @@ def test_empty_data() -> None:
 
 if __name__ == '__main__':
     test_danger_detector()
-    test_proximity_violation()
     test_empty_data()
     print("\n=== All tests completed ===")

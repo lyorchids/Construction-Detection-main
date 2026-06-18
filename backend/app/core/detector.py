@@ -167,7 +167,7 @@ class YOLODetector:
         Returns:
             List of DetectionResult objects.
         """
-        results = self.model(image, verbose=False)
+        results = self.model(image, conf=conf_threshold, verbose=False)
         boxes = results[0].boxes
 
         if len(boxes) == 0:
@@ -214,7 +214,7 @@ class YOLODetector:
         """
         self.frame_count += 1
 
-        results = self.model(image, verbose=False)
+        results = self.model(image, conf=conf_threshold, verbose=False)
         boxes = results[0].boxes
 
         if len(boxes) == 0:
@@ -276,7 +276,7 @@ class YOLODetector:
         self.frame_count += 1
 
         results = self.model.track(
-            frame, persist=True, verbose=False,
+            frame, conf=conf_threshold, persist=True, verbose=False,
         )
         boxes = results[0].boxes
 

@@ -13,8 +13,34 @@ const emit = defineEmits<{
   'save': [data: any]
 }>()
 
-const visible = ref(false)
-watch(() => props.modelValue, (v) => { visible.value = v })
+const visible = computed({
+  get: () => props.modelValue,
+  set: (v) => emit('update:modelValue', v),
+})
+
+watch(() => props.modelValue, (v) => {
+  if (v && !props.profile) resetForm()
+})
+
+function resetForm() {
+  form.value = {
+    name: '',
+    type: props.profileType,
+    description: '',
+    ppeEnabled: true,
+    ppeThreshold: 0.25,
+    fireEnabled: false,
+    fireThreshold: 0.25,
+    dangerNoHardhat: true,
+    dangerNoMask: true,
+    dangerNoSafetyVest: true,
+    dangerRestrictedArea: true,
+    dangerPoleArea: false,
+    dangerMachineryPole: false,
+    detectionInterval: 1.0,
+    saveScreenshots: true,
+  }
+}
 
 const form = ref({
   name: '',
@@ -27,7 +53,6 @@ const form = ref({
   dangerNoHardhat: true,
   dangerNoMask: true,
   dangerNoSafetyVest: true,
-  dangerNearMachinery: true,
   dangerRestrictedArea: true,
   dangerPoleArea: false,
   dangerMachineryPole: false,
@@ -43,7 +68,6 @@ function compatRules(rules: Record<string, any>): Record<string, boolean> {
       detect_no_hardhat: val,
       detect_no_mask: val,
       detect_no_safety_vest: val,
-      detect_near_machinery_or_vehicle: rules.detect_near_machinery_or_vehicle ?? true,
       detect_in_restricted_area: rules.detect_in_restricted_area ?? true,
       detect_in_utility_pole_restricted_area: rules.detect_in_utility_pole_restricted_area ?? false,
       detect_machinery_close_to_pole: rules.detect_machinery_close_to_pole ?? false,
@@ -69,7 +93,6 @@ watch(() => props.profile, (p) => {
       dangerNoHardhat: rules.detect_no_hardhat ?? true,
       dangerNoMask: rules.detect_no_mask ?? true,
       dangerNoSafetyVest: rules.detect_no_safety_vest ?? true,
-      dangerNearMachinery: rules.detect_near_machinery_or_vehicle ?? true,
       dangerRestrictedArea: rules.detect_in_restricted_area ?? true,
       dangerPoleArea: rules.detect_in_utility_pole_restricted_area ?? false,
       dangerMachineryPole: rules.detect_machinery_close_to_pole ?? false,
@@ -77,24 +100,7 @@ watch(() => props.profile, (p) => {
       saveScreenshots: cfg.save_screenshots ?? true,
     }
   } else {
-    form.value = {
-      name: '',
-      type: props.profileType,
-      description: '',
-      ppeEnabled: true,
-      ppeThreshold: 0.25,
-      fireEnabled: false,
-      fireThreshold: 0.25,
-      dangerNoHardhat: true,
-      dangerNoMask: true,
-      dangerNoSafetyVest: true,
-      dangerNearMachinery: true,
-      dangerRestrictedArea: true,
-      dangerPoleArea: false,
-      dangerMachineryPole: false,
-      detectionInterval: 1.0,
-      saveScreenshots: true,
-    }
+    resetForm()
   }
 }, { immediate: true })
 
@@ -108,7 +114,6 @@ function buildConfig() {
         detect_no_hardhat: form.value.dangerNoHardhat,
         detect_no_mask: form.value.dangerNoMask,
         detect_no_safety_vest: form.value.dangerNoSafetyVest,
-        detect_near_machinery_or_vehicle: form.value.dangerNearMachinery,
         detect_in_restricted_area: form.value.dangerRestrictedArea,
         detect_in_utility_pole_restricted_area: form.value.dangerPoleArea,
         detect_machinery_close_to_pole: form.value.dangerMachineryPole,
@@ -146,24 +151,22 @@ function handleSave() {
     description: form.value.description.trim(),
     config: buildConfig(),
   })
-  visible.value = false
+  emit('update:modelValue', false)
 }
 
 function handleClose() {
-  visible.value = false
+  emit('update:modelValue', false)
 }
 
-watch(visible, (v) => { emit('update:modelValue', v) })
+
 </script>
 
 <template>
   <el-dialog
-    :model-value="visible"
-    @update:model-value="visible = $event"
+    v-model="visible"
     :title="profile ? '编辑配置' : '新建配置'"
     width="600px"
     :close-on-click-modal="false"
-    @close="handleClose"
   >
     <el-form :model="form" label-position="top">
       <el-row :gutter="16">
@@ -199,7 +202,6 @@ watch(visible, (v) => { emit('update:modelValue', v) })
             <el-checkbox v-model="form.dangerNoHardhat">未戴安全帽</el-checkbox>
             <el-checkbox v-model="form.dangerNoMask">未佩戴口罩</el-checkbox>
             <el-checkbox v-model="form.dangerNoSafetyVest">未穿反光背心</el-checkbox>
-            <el-checkbox v-model="form.dangerNearMachinery">靠近机械/车辆</el-checkbox>
             <el-checkbox v-model="form.dangerRestrictedArea">进入锥形桶管控区</el-checkbox>
             <el-checkbox v-model="form.dangerPoleArea">进入电线杆管控区</el-checkbox>
             <el-checkbox v-model="form.dangerMachineryPole">机械靠近电线杆</el-checkbox>

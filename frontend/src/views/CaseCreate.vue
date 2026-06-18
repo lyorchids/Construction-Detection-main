@@ -47,11 +47,12 @@ async function loadRecordInfo() {
     const { data: violations } = await getViolations(sourceRecordId.value)
     const typeLabels: Record<string, string> = {
       warning_no_hardhat: '未戴安全帽',
+      warning_no_mask: '未佩戴口罩',
       warning_no_safety_vest: '未穿反光背心',
-      warning_close_to_machinery: '靠近机械',
-      warning_close_to_vehicle: '靠近车辆',
       warning_people_in_controlled_area: '进入管控区',
       warning_people_in_utility_pole_controlled_area: '进入电线杆区',
+      warning_fire: '检测到火焰',
+      warning_smoke: '检测到烟雾',
     }
     const typeCounts: Record<string, number> = {}
     for (const v of violations) {
@@ -66,8 +67,6 @@ async function loadRecordInfo() {
     const firstViolation = violations[0]
     const typeMap: Record<string, string> = {
       warning_no_hardhat: 'no_hardhat',
-      warning_close_to_machinery: 'dangerous_operation',
-      warning_close_to_vehicle: 'dangerous_operation',
       warning_people_in_controlled_area: 'dangerous_operation',
       warning_people_in_utility_pole_controlled_area: 'dangerous_operation',
     }

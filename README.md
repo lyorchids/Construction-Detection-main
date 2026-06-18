@@ -5,14 +5,14 @@
 ## ✨ 功能特性
 
 ### 🎯 检测识别
-  - **目标检测**：基于 YOLO 模型，识别 11 类目标（安全帽、口罩、人员、机械、车辆、锥形桶、电线杆等）
-  - **违规判定**：七大违规规则引擎，实时检测 PPE 穿戴、机械/车辆近身、管控区闯入等违规行为
-  - **图片检测**：上传单张图片进行检测 + 标注可视化
-  - **视频检测**：上传视频文件逐帧检测 + WebSocket 流式推送
+  - **目标检测**：基于双 YOLO 模型（PPE 检测模型 + 火灾烟雾检测模型），识别安全帽、口罩、人员、机械、车辆、锥形桶、电线杆、火焰、烟雾等目标
+  - **违规判定**：7 大违规规则引擎，实时检测 PPE 穿戴、管控区闯入、火灾烟雾等违规行为
+  - **图片检测**：上传单张图片进行检测 + 标注可视化（仅标注违规框，非违规目标不显示）
+  - **视频检测**：上传视频文件逐帧检测 + WebSocket 流式推送 + 检测完成后自动清理原视频
 
 ### 📊 数据管理
-- **检测记录**：记录每次检测的统计信息、违规详情
-- **历史查询**：支持按时间、文件类型分页检索所有检测记录
+- **检测记录**：记录每次检测的统计信息、违规详情（含违规截图路径）
+- **历史查询**：支持按时间范围、文件类型分页检索所有检测记录（默认可筛选今天范围）
 - **统计数据**：首页仪表盘展示总检测次数、违规趋势、违规分布
   
 ### 📋 案例库管理
@@ -23,7 +23,7 @@
 - **种子数据**：系统启动时自动初始化 10 个预设案例
 
 ### ⚙️ 检测配置管理
-- **配置模板**：支持创建图片/视频两类检测配置模板，预设模型选择、违规规则开关、置信度阈值
+- **配置模板**：支持创建图片/视频两类检测配置模板，预设模型选择、违规规则开关、置信度阈值（阈值传参修复——此前 YOLO 默认 `conf=0.25` 会丢弃低置信度检测，现已改为用户真实阈值）
 - **折叠式配置卡**：图片/视频检测页使用折叠卡片展示配置摘要，展开后可编辑全部参数
 - **旧配置兼容**：自动将旧版 `detect_no_safety_vest_or_helmet` 配置迁移为三个独立开关
 - **视频专属参数**：检测间隔（0.5-10秒滑条）、保存违规截图开关
@@ -37,9 +37,11 @@
 
 ### 🤖 AI 智能分析
 - **违规报告**：调用 DeepSeek / 通义千问等 AI 模型生成标准违规分析报告
-- **报告内容**：基本信息、检测概况、违规详情、安全评估、总体建议
-- **单条分析**：对某条检测记录进行深入 AI 分析
-- **范围分析**：对指定日期范围内的所有记录进行综合分析
+- **报告结构**：基本信息 + 检测概况 + 违规详情（固定模板描述/建议） + 安全评估（综合评价/风险因素/主要发现） + 总体建议
+- **单条分析**：对某条检测记录进行单次检测 AI 分析（侧重建材视频内时间维度，如"第X秒"）
+- **时段分析**：对指定日期范围（1~7天）内的所有违规记录进行综合 AI 分析（侧重建日趋势、反复违规模式），支持历史首页直接操作
+- **离线降级**：AI 服务不可用时自动降级为离线模板报告，不中断业务流程
+- **Word 导出**：AI 分析报告支持一键下载 .docx 格式，包含违规截图嵌入
 
 ## 🏗️ 系统架构
 
@@ -262,7 +264,8 @@ npm run dev
 | 方法 | 路由 | 说明 |
 |------|------|------|
 | POST | `/api/v1/report/generate` | 生成 Word 报告 |
-| POST | `/api/v1/report/ai-analysis` | AI 智能分析报告 |
+| POST | `/api/v1/report/ai-analysis` | AI 智能分析报告（支持 `record_id` 单条或 `start_date`/`end_date` 时段） |
+| POST | `/api/v1/report/ai-analysis/download` | 下载 AI 分析报告为 .docx（含违规截图） |
 | GET | `/api/v1/report/download/{filename}` | 下载报告文件 |
 
 ## 🖥️ 前端页面
@@ -272,8 +275,8 @@ npm run dev
 | `/` | Home.vue | 首页统计仪表盘（ECharts 图表） |
 | `/image-detect` | ImageDetect.vue | 图片上传与检测 |
 | `/video-detect` | VideoDetect.vue | 视频上传与检测（固定间隔 + 缓存框 + 加载动画） |
-| `/history` | History.vue | 检测历史记录列表 |
-| `/detail/:id` | Detail.vue | 记录详情 + AI 分析 |
+| `/history` | History.vue | 检测历史记录列表（支持日期范围筛选 + 时段 AI 分析报告生成） |
+| `/detail/:id` | Detail.vue | 记录详情 + AI 分析报告 + 违规截图预览 + 下载 Word 报告 |
 | `/cases` | CaseList.vue | 案例库列表（筛选/搜索） |
 | `/cases/create` | CaseCreate.vue | 创建案例（手动/从记录） |
 | `/cases/:id` | CaseDetail.vue | 案例详情（查看/编辑） |
@@ -286,10 +289,10 @@ npm run dev
 | `warning_no_hardhat` | 未戴安全帽 | Person 与 NO-Hardhat 高度重叠 |
 | `warning_no_mask` | 未戴口罩 | 检测到 NO-Mask 目标 |
 | `warning_no_safety_vest` | 未穿反光背心 | Person 与 NO-Safety Vest 高度重叠 |
-| `warning_close_to_machinery` | 靠近机械 | Person 与 Machinery 距离过近 |
-| `warning_close_to_vehicle` | 靠近车辆 | Person 与 Vehicle 距离过近 |
 | `warning_people_in_controlled_area` | 进入锥形桶管控区 | Person 进入 Safety Cone 围成的多边形区域 |
 | `warning_people_in_utility_pole_controlled_area` | 进入电线杆管控区 | Person 进入 Utility Pole 的圆形缓冲区 |
+| `warning_fire` | 检测到火焰 | 火灾模型检测到 fire 目标 |
+| `warning_smoke` | 检测到烟雾 | 火灾模型检测到 smoke 目标 |
 
 ### YOLO 类别映射
 
@@ -325,62 +328,67 @@ AI_MODEL=deepseek-chat                          # 或 qwen3-max 等
 
 AI 分析报告包含以下结构化字段：
 
-- **基本信息**：报告编号、时间、文件名、检测类型、检测时长、目标总数
-- **检测概况**：违规总数、风险等级、违规率
-- **违规详情**：每条违规的类型、数量、首次出现时间、严重等级、描述、整改建议
-- **安全评估**：PPE 合规率、近距作业合规率、管控区合规率
+- **基本信息**：报告编号、时间、文件名/分析时段、检测类型、检测时长、目标总数
+- **检测概况**：违规总数、风险等级
+- **违规详情**：每条违规的**类型**、**数量**、**首次出现时间**（单条模式为"第X秒"，时段模式为"日期"）、**严重等级**、**违规描述**（固定模板）、**整改建议**（固定模板）
+- **安全评估**：**综合评价**（分析违规数据反映的管理问题和潜在风险）、**风险因素**（list）、**主要发现**（核心发现和趋势判断）
 - **总体建议**：综合安全建议
 - **专家签名**：AI 安全专家署名
+
+> 违规描述和整改建议使用代码内置的固定模板生成，AI 仅负责安全评估和总体建议部分，保证离线也可生成完整报告。
 
 ## 📁 项目结构
 
 ```
 ├── backend/
 │   ├── app/
-│   │   ├── api/               # FastAPI 路由层
-│   │   │   ├── upload.py      # 文件上传
-│   │   │   ├── image_detect.py # 图片检测
-│   │   │   ├── video_detect.py # 视频检测
-│   │   │   ├── history.py     # 历史记录
-│   │   │   ├── report.py      # 报告生成
-│   │   │   ├── cases.py       # 案例库
-│   │   │   └── ws.py          # WebSocket
-│   │   ├── core/              # 核心检测引擎
-│   │   │   ├── detector.py     # YOLO 模型推理（含内置 ByteTrack 跟踪）
-│   │   │   ├── danger_rules.py # 7 大危险判定规则引擎
+│   │   ├── api/                  # FastAPI 路由层
+│   │   │   ├── upload.py         # 文件上传
+│   │   │   ├── image_detect.py   # 图片检测
+│   │   │   ├── video_detect.py   # 视频检测
+│   │   │   ├── history.py        # 历史记录
+│   │   │   ├── report.py         # 报告生成 + AI 分析
+│   │   │   ├── cases.py          # 案例库
+│   │   │   ├── detection_profiles.py  # 检测配置模板
+│   │   │   └── models.py         # 模型管理
+│   │   ├── core/                 # 核心检测引擎
+│   │   │   ├── detector.py       # YOLO 模型推理（含内置 ByteTrack 跟踪）
+│   │   │   ├── danger_rules.py   # 7 大危险判定规则引擎
 │   │   │   ├── violation_state.py # 每人违规状态机（SAFE/WARN/ACTIVE/COOLDOWN）
-│   │   │   ├── streamer.py    # 视频流检测（固定时间间隔 + 状态机去重 + 结果缓存）
-│   │   │   └── annotator.py   # 标注绘制
-│   │   ├── models/            # SQLAlchemy 数据模型
-│   │   │   ├── detection.py   # 检测记录/违规
-│   │   │   └── case.py        # 案例库
-│   │   ├── schemas/           # Pydantic 数据模式
-│   │   │   ├── detection.py   # 检测相关
-│   │   │   └── case.py        # 案例相关
-│   │   ├── services/          # 业务逻辑层
-│   │   │   ├── detection_service.py  # 检测记录服务
-│   │   │   ├── ai_service.py         # AI 分析服务
-│   │   │   ├── report_service.py     # Word 报告服务
-│   │   │   ├── case_service.py       # 案例库服务
-│   │   │   └── seed_cases.py         # 案例种子数据
-│   │   ├── config.py          # 配置管理
-│   │   ├── database.py        # 数据库连接
-│   │   └── main.py            # FastAPI 应用入口
-│   ├── uploads/               # 上传文件存储
-│   ├── violations/            # 违规截图存储
-│   ├── reports/               # 报告文件存储
-│   ├── models/                # YOLO 模型文件
-│   └── run.py                 # 启动脚本
+│   │   │   ├── streamer.py       # 视频流检测（固定时间间隔 + 状态机去重 + 结果缓存）
+│   │   │   └── annotator.py      # 标注绘制
+│   │   ├── models/               # SQLAlchemy 数据模型
+│   │   │   ├── detection.py      # 检测记录/违规
+│   │   │   └── case.py           # 案例库
+│   │   ├── schemas/              # Pydantic 数据模式
+│   │   │   ├── detection.py      # 检测相关
+│   │   │   └── case.py           # 案例相关
+│   │   ├── services/             # 业务逻辑层
+│   │   │   ├── detection_service.py   # 检测记录服务
+│   │   │   ├── ai_service.py          # AI 分析服务（两套提示词：单条/时段）
+│   │   │   ├── report_service.py      # Word 报告服务
+│   │   │   ├── case_service.py        # 案例库服务
+│   │   │   ├── detection_profile_service.py  # 配置模板服务
+│   │   │   └── seed_cases.py          # 案例种子数据
+│   │   ├── config.py             # 配置管理
+│   │   ├── database.py           # 数据库连接
+│   │   └── main.py               # FastAPI 应用入口
+│   ├── uploads/                  # 上传文件存储
+│   ├── violations/               # 违规截图存储
+│   ├── reports/                  # 报告文件存储
+│   ├── models/                   # YOLO 模型文件
+│   └── run.py                    # 启动脚本
 ├── frontend/
 │   ├── src/
-│   │   ├── views/             # 页面组件
-│   │   ├── api/               # API 封装
-│   │   ├── router/            # Vue Router 配置
-│   │   ├── store/             # Pinia 状态管理
-│   │   └── components/        # 公共组件
+│   │   ├── views/                # Vue 页面组件
+│   │   ├── api/                  # Axios API 封装
+│   │   ├── router/               # Vue Router 配置
+│   │   ├── store/                # Pinia 状态管理
+│   │   └── components/           # 公共 UI 组件
 │   └── package.json
+├── esay_detector/                # 轻量本地检测模块（独立运行）
 ├── docs/
-│   └── datasets.md            # 开源数据集推荐
+│   └── datasets.md               # 开源数据集推荐
 └── README.md
 ```
 

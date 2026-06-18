@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import VIOLATION_DIR
 from app.models.detection import DetectionRecord, Violation
+
+logger = logging.getLogger(__name__)
 
 
 def get_stats(db: Session) -> dict:
@@ -40,20 +45,23 @@ def get_stats(db: Session) -> dict:
         'no_hardhat': db.scalar(
             select(func.sum(DetectionRecord.v_no_hardhat))
         ) or 0,
+        'no_mask': db.scalar(
+            select(func.sum(DetectionRecord.v_no_mask))
+        ) or 0,
         'no_safety_vest': db.scalar(
             select(func.sum(DetectionRecord.v_no_safety_vest))
-        ) or 0,
-        'close_to_machinery': db.scalar(
-            select(func.sum(DetectionRecord.v_close_to_machinery))
-        ) or 0,
-        'close_to_vehicle': db.scalar(
-            select(func.sum(DetectionRecord.v_close_to_vehicle))
         ) or 0,
         'in_controlled_area': db.scalar(
             select(func.sum(DetectionRecord.v_in_controlled_area))
         ) or 0,
         'in_pole_area': db.scalar(
             select(func.sum(DetectionRecord.v_in_pole_area))
+        ) or 0,
+        'fire': db.scalar(
+            select(func.sum(DetectionRecord.v_fire))
+        ) or 0,
+        'smoke': db.scalar(
+            select(func.sum(DetectionRecord.v_smoke))
         ) or 0,
     }
 
@@ -92,11 +100,12 @@ def create_record(
     violation_count: int = 0,
     duration: float = 0.0,
     v_no_hardhat: int = 0,
+    v_no_mask: int = 0,
     v_no_safety_vest: int = 0,
-    v_close_to_machinery: int = 0,
-    v_close_to_vehicle: int = 0,
     v_in_controlled_area: int = 0,
     v_in_pole_area: int = 0,
+    v_fire: int = 0,
+    v_smoke: int = 0,
 ) -> DetectionRecord:
     record = DetectionRecord(
         filename=filename,
@@ -106,11 +115,12 @@ def create_record(
         violation_count=violation_count,
         duration=duration,
         v_no_hardhat=v_no_hardhat,
+        v_no_mask=v_no_mask,
         v_no_safety_vest=v_no_safety_vest,
-        v_close_to_machinery=v_close_to_machinery,
-        v_close_to_vehicle=v_close_to_vehicle,
         v_in_controlled_area=v_in_controlled_area,
         v_in_pole_area=v_in_pole_area,
+        v_fire=v_fire,
+        v_smoke=v_smoke,
     )
     db.add(record)
     db.commit()
@@ -198,8 +208,28 @@ def delete_record(db: Session, record_id: int) -> bool:
     record = db.get(DetectionRecord, record_id)
     if not record:
         return False
+
+    # Collect screenshot file paths before deletion
+    screenshot_files: list[Path] = []
+    for violation in record.violations:
+        sp = violation.screenshot_path
+        if sp:
+            filename = sp.lstrip('/violations/')
+            if filename:
+                screenshot_files.append(VIOLATION_DIR / filename)
+
     db.delete(record)
     db.commit()
+
+    # Delete screenshot files (best-effort, after DB commit)
+    for fp in screenshot_files:
+        try:
+            if fp.exists():
+                fp.unlink()
+                logger.info(f"Deleted screenshot: {fp}")
+        except Exception as e:
+            logger.error(f"Failed to delete screenshot {fp}: {e}")
+
     return True
 
 

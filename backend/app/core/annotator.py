@@ -1,38 +1,78 @@
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+
 import cv2
+import numpy as np
+from PIL import Image
+from PIL import ImageDraw
+from PIL import ImageFont
 from typing import Any
 
-# 违规等级 → BGR 颜色
+logger = logging.getLogger(__name__)
+
+# ── 颜色 ──
 LEVEL_COLORS: dict[str, tuple[int, int, int]] = {
     'high': (0, 0, 255),
     'medium': (0, 165, 255),
     'low': (0, 255, 255),
 }
 
-# 违规类型 → 等级
 VIOLATION_LEVELS: dict[str, str] = {
     'warning_no_hardhat': 'high',
     'warning_people_in_controlled_area': 'high',
     'warning_people_in_utility_pole_controlled_area': 'high',
-    'warning_close_to_machinery': 'medium',
-    'warning_close_to_vehicle': 'medium',
     'warning_no_safety_vest': 'low',
     'warning_no_mask': 'low',
 }
 
-# 违规类型 → 中文标签（用于截图标注）
 VIOLATION_LABELS_CN: dict[str, str] = {
     'warning_no_hardhat': '未戴安全帽',
     'warning_no_mask': '未戴口罩',
     'warning_no_safety_vest': '未穿反光背心',
-    'warning_close_to_machinery': '靠近机械',
-    'warning_close_to_vehicle': '靠近车辆',
     'warning_people_in_controlled_area': '进入锥形桶管控区',
     'warning_people_in_utility_pole_controlled_area': '进入电线杆管控区',
     'warning_fire': '火焰',
     'warning_smoke': '烟雾',
 }
+
+# ── 中文字体加载 ──
+_FONT_PATHS = [
+    'C:/Windows/Fonts/simhei.ttf',
+    'C:/Windows/Fonts/msyh.ttc',
+    'C:/Windows/Fonts/simsun.ttc',
+    '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+    '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+    '/System/Library/Fonts/PingFang.ttc',
+]
+
+_FONT: ImageFont.FreeTypeFont | None = None
+for _fp in _FONT_PATHS:
+    p = Path(_fp)
+    if p.exists():
+        try:
+            _FONT = ImageFont.truetype(str(p), 18)
+            _FONT_SMALL = ImageFont.truetype(str(p), 14)
+            logger.info(f"Loaded font: {p}")
+            break
+        except Exception:
+            continue
+
+if _FONT is None:
+    logger.warning('No CJK font found, Chinese text may show as ???')
+    _FONT = ImageFont.load_default()
+    _FONT_SMALL = ImageFont.load_default()
+
+
+def _cv2_to_pil(img_bgr: np.ndarray) -> Image.Image:
+    """Convert OpenCV BGR image to PIL RGB."""
+    return Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
+
+
+def _pil_to_cv2(pil_img: Image.Image) -> np.ndarray:
+    """Convert PIL RGB back to OpenCV BGR."""
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
 
 def draw_annotations(
@@ -40,29 +80,18 @@ def draw_annotations(
     detections: list[Any],
     warnings: dict[str, Any],
 ) -> Any:
-    """在图像上绘制检测框和违规标注。
+    """Draw detection boxes and violation labels on a copy of the frame.
 
-    Args:
-        frame: BGR 图像 (numpy array)
-        detections: 检测结果列表，每个元素有 .bbox, .confidence, .class_id, .class_name
-        warnings: 违规字典，每个包含 'objects' 列表，内有 bbox/confidence
-
-    Returns:
-        标注后的图像（新图像，不修改原图）
+    Chinese violation labels are rendered via PIL to support CJK glyphs.
     """
     img = frame.copy()
 
-    # 1. 画所有检测框（浅色细线）
+    # ── 1. Draw all detection boxes (cv2) ──
     for d in detections:
         x1, y1, x2, y2 = map(int, d.bbox[:4])
         cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 1)
-        label = f'{d.class_name} {d.confidence:.2f}'
-        cv2.putText(
-            img, label, (x1, y1 - 5),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1,
-        )
 
-    # 2. 高亮违规对象（按等级着色，粗框）
+    # ── 2. Highlight violation boxes (cv2) ──
     for vtype, vdata in warnings.items():
         if not isinstance(vdata, dict):
             continue
@@ -78,13 +107,42 @@ def draw_annotations(
             if len(bbox) < 4:
                 continue
             x1, y1, x2, y2 = map(int, bbox[:4])
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+
+    # ── 3. Draw ALL text via PIL (supports Chinese) ──
+    pil_img = _cv2_to_pil(img)
+    draw = ImageDraw.Draw(pil_img)
+
+    for d in detections:
+        x1, y1, x2, y2 = map(int, d.bbox[:4])
+        label = f'{d.class_name} {d.confidence:.2f}'
+        draw.text(
+            (x1 + 2, y1 - _FONT_SMALL.size - 2),
+            label, font=_FONT_SMALL, fill=(0, 255, 0),
+        )
+
+    for vtype, vdata in warnings.items():
+        if not isinstance(vdata, dict):
+            continue
+        objects = vdata.get('objects', [])
+        if not isinstance(objects, list):
+            continue
+        level = VIOLATION_LEVELS.get(vtype, 'medium')
+        color = LEVEL_COLORS[level]
+        color_rgb = (color[2], color[1], color[0])
+        cn_label = VIOLATION_LABELS_CN.get(vtype, vtype)
+        for obj in objects:
+            if not isinstance(obj, dict):
+                continue
+            bbox = obj.get('bbox', [])
+            if len(bbox) < 4:
+                continue
+            x1, y1, x2, y2 = map(int, bbox[:4])
             conf = obj.get('confidence', 0)
-            cv2.rectangle(img, (x1, y1), (x2, y2), color, 3)
-            cn_label = VIOLATION_LABELS_CN.get(vtype, vtype)
             label = f'{cn_label} {conf:.2f}'
-            cv2.putText(
-                img, label, (x1, y1 - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2,
+            draw.text(
+                (x1 + 2, y1 - _FONT.size - 2),
+                label, font=_FONT, fill=color_rgb,
             )
 
-    return img
+    return _pil_to_cv2(pil_img)

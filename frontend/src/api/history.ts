@@ -10,11 +10,12 @@ export interface RecordItem {
   violation_count: number
   duration: number
   v_no_hardhat?: number
+  v_no_mask?: number
   v_no_safety_vest?: number
-  v_close_to_machinery?: number
-  v_close_to_vehicle?: number
   v_in_controlled_area?: number
   v_in_pole_area?: number
+  v_fire?: number
+  v_smoke?: number
 }
 
 export interface PaginatedRecords {
@@ -38,11 +39,12 @@ export interface Stats {
   last_7_days: StatsDayItem[]
   violation_by_type_detail?: {
     no_hardhat: number
+    no_mask: number
     no_safety_vest: number
-    close_to_machinery: number
-    close_to_vehicle: number
     in_controlled_area: number
     in_pole_area: number
+    fire: number
+    smoke: number
   }
 }
 
@@ -62,18 +64,33 @@ export interface AIBasicInfo {
   detection_type: string
   detection_duration: number
   total_targets: number
+  analysis_period?: string
+  total_records?: number
 }
 
 export interface AISummary {
   total_violations: number
   risk_level: string
-  violation_rate: string
 }
 
 export interface AISafetyAssessment {
-  ppe_compliance: string
-  proximity_compliance: string
-  restricted_area_compliance: string
+  overall_evaluation: string
+  risk_factors: string[]
+  key_findings: string
+}
+
+export interface DailyOverview {
+  dates: string[]
+  daily_counts: Record<string, Record<string, number>>
+  trend: 'increasing' | 'decreasing' | 'stable'
+  record_breakdown: {
+    filename: string
+    detect_time: string
+    date: string
+    time: string
+    violation_count: number
+    type_counts: Record<string, number>
+  }[]
 }
 
 export interface AIReport {
@@ -81,6 +98,7 @@ export interface AIReport {
   basic_info: AIBasicInfo
   summary: AISummary
   violation_details: AIReportViolation[]
+  daily_overview?: DailyOverview | null
   safety_assessment: AISafetyAssessment
   overall_suggestion: string
   expert_signature: string
@@ -93,6 +111,13 @@ export function getStats() {
 export function generateAIReport(recordId?: number) {
   const params = recordId ? { record_id: recordId } : {}
   return api.post<AIReport>('/report/ai-analysis', params)
+}
+
+export function generateAIReportByDate(startDate: string, endDate: string) {
+  return api.post<AIReport>('/report/ai-analysis', {
+    start_date: startDate,
+    end_date: endDate,
+  })
 }
 
 export function getRecords(params: {
@@ -115,4 +140,19 @@ export function getViolations(recordId: number) {
 
 export function deleteRecord(id: number) {
   return api.delete(`/records/${id}`)
+}
+
+export function downloadAIReportWord(recordId: number) {
+  return api.post('/report/ai-analysis/download', { record_id: recordId }, {
+    responseType: 'blob',
+  })
+}
+
+export function downloadAIReportWordByDate(startDate: string, endDate: string) {
+  return api.post('/report/ai-analysis/download', {
+    start_date: startDate,
+    end_date: endDate,
+  }, {
+    responseType: 'blob',
+  })
 }

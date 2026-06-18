@@ -3,12 +3,10 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { uploadImage } from '../api/upload'
 import api, { getModels } from '../api'
-import { getProfiles, createProfile } from '../api/detection_profile'
+import { getProfiles } from '../api/detection_profile'
 import type { DetectionProfile } from '../api/detection_profile'
 import DetectionCanvas from '../components/DetectionCanvas.vue'
 import ViolationWarning from '../components/ViolationWarning.vue'
-import DetectionProfileDialog from '../components/DetectionProfileDialog.vue'
-
 interface ModelInfo {
   name: string
   classes: Record<string, string>
@@ -22,16 +20,28 @@ const currentFrame = ref('')
 const detections = ref<any[]>([])
 const violations = ref<any[]>([])
 const totalObjects = ref(0)
+const uploadedFilePath = ref('')
 
 // Annotation mode: 'all' = 全部标注, 'config' = 配置标注
-const annotationMode = ref<'all' | 'config'>('all')
+const annotationMode = ref<'all' | 'config'>('config')
 
 // Class filter for "全部标注" mode
-const ALL_CLASS_NAMES = [
-  'Person', 'Hardhat', 'Mask', 'Safety Vest', 'Safety Cone', 'Utility Pole',
-  'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest',
-  'Machinery', 'Vehicle', 'Fire', 'Smoke',
-]
+const CLASS_NAME_LABELS: Record<string, string> = {
+  Person: '人员',
+  Hardhat: '安全帽',
+  Mask: '口罩',
+  'Safety Vest': '反光背心',
+  'Safety Cone': '锥形桶',
+  'Utility Pole': '电线杆',
+  'NO-Hardhat': '未戴安全帽',
+  'NO-Mask': '未戴口罩',
+  'NO-Safety Vest': '未穿反光背心',
+  Machinery: '机械',
+  Vehicle: '车辆',
+  Fire: '火焰',
+  Smoke: '烟雾',
+}
+const ALL_CLASS_NAMES = Object.keys(CLASS_NAME_LABELS)
 const displayClasses = ref<Record<string, boolean>>(
   Object.fromEntries(ALL_CLASS_NAMES.map(n => [n, true])),
 )
@@ -45,7 +55,6 @@ const dangerRules = ref({
   detect_no_hardhat: true,
   detect_no_mask: true,
   detect_no_safety_vest: true,
-  detect_near_machinery_or_vehicle: true,
   detect_in_restricted_area: true,
   detect_in_utility_pole_restricted_area: false,
   detect_machinery_close_to_pole: false,
@@ -61,7 +70,6 @@ const configExpanded = ref(false)
 // Profile state
 const profiles = ref<DetectionProfile[]>([])
 const selectedProfileId = ref<number | null>(null)
-const dialogVisible = ref(false)
 
 onMounted(async () => {
   try {
@@ -111,8 +119,6 @@ const VIOLATION_LABELS: Record<string, string> = {
   warning_no_hardhat: '未戴安全帽',
   warning_no_mask: '未佩戴口罩',
   warning_no_safety_vest: '未穿反光背心',
-  warning_close_to_machinery: '靠近作业机械',
-  warning_close_to_vehicle: '靠近施工车辆',
   warning_people_in_controlled_area: '进入管控区',
   warning_people_in_utility_pole_controlled_area: '进入电线杆管控区',
   warning_fire: '检测到火焰',
@@ -126,7 +132,6 @@ function compatRules(rules: Record<string, any>): Record<string, any> {
       detect_no_hardhat: val,
       detect_no_mask: val,
       detect_no_safety_vest: val,
-      detect_near_machinery_or_vehicle: rules.detect_near_machinery_or_vehicle ?? true,
       detect_in_restricted_area: rules.detect_in_restricted_area ?? true,
       detect_in_utility_pole_restricted_area: rules.detect_in_utility_pole_restricted_area ?? false,
       detect_machinery_close_to_pole: rules.detect_machinery_close_to_pole ?? false,
@@ -161,32 +166,32 @@ function onProfileChange(profileId: number | string) {
   if (profile) applyProfile(profile)
 }
 
-async function saveAsProfile() {
-  dialogVisible.value = true
-}
-
-async function handleSaveProfile(data: any) {
-  try {
-    await createProfile(data)
-    ElMessage.success('配置已保存')
-    await loadProfiles()
-  } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '保存失败')
-  }
-}
-
 async function handleUpload(file: File) {
   uploading.value = true
   try {
     const { data } = await uploadImage(file)
     progress.value = 100
-    ElMessage.success('上传成功，开始检测...')
-    await detectImage(data.file_path)
+    uploadedFilePath.value = data.file_path
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const result = e.target?.result as string
+      currentFrame.value = result.split(',')[1] || result
+    }
+    reader.readAsDataURL(file)
+    ElMessage.success('上传成功')
   } catch (error: any) {
     ElMessage.error(error.response?.data?.detail || '上传失败')
   } finally {
     uploading.value = false
   }
+}
+
+async function startDetect() {
+  if (!uploadedFilePath.value) {
+    ElMessage.warning('请先上传图片')
+    return
+  }
+  await detectImage(uploadedFilePath.value)
 }
 
 async function detectImage(filePath: string) {
@@ -226,6 +231,7 @@ async function detectImage(filePath: string) {
 
 function reset() {
   currentFrame.value = ''
+  uploadedFilePath.value = ''
   detections.value = []
   violations.value = []
   totalObjects.value = 0
@@ -241,7 +247,6 @@ function reset() {
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span style="font-weight: 600">检测配置</span>
           <div style="display: flex; gap: 8px">
-            <el-button size="small" @click="saveAsProfile">+ 保存</el-button>
             <el-button size="small" @click="$router.push('/profiles')">管理</el-button>
           </div>
         </div>
@@ -268,38 +273,44 @@ function reset() {
       <!-- Summary line -->
       <div class="config-summary">
         <span class="config-tag" :class="{ on: selectedModels.ppe }">PPE</span>
-        <span v-if="selectedModels.ppe" class="config-sub">({{ dangerRules.detect_no_hardhat ? '安全帽' : '' }}{{ dangerRules.detect_no_mask ? '口罩' : '' }}{{ dangerRules.detect_no_safety_vest ? '背心' : '' }}{{ dangerRules.detect_near_machinery_or_vehicle ? '机械' : '' }}{{ dangerRules.detect_in_restricted_area ? '锥形桶' : '' }})</span>
+        <span v-if="selectedModels.ppe" class="config-sub">({{ dangerRules.detect_no_hardhat ? '安全帽' : '' }}{{ dangerRules.detect_no_mask ? '口罩' : '' }}{{ dangerRules.detect_no_safety_vest ? '背心' : '' }}{{ dangerRules.detect_in_restricted_area ? '锥形桶' : '' }})</span>
         <span class="config-tag" :class="{ on: selectedModels.fire }">Fire</span>
+        <span v-if="selectedModels.fire" class="config-sub">(火焰/烟雾)</span>
         <el-button link size="small" @click="configExpanded = !configExpanded" style="margin-left: auto">
           {{ configExpanded ? '收起' : '展开' }}详细配置
         </el-button>
       </div>
 
-      <!-- Expanded details -->
+      <!-- Expanded details (read-only) -->
       <el-collapse-transition>
         <div v-show="configExpanded" class="config-detail">
           <div v-for="(info, key) in availableModels" :key="key" class="model-config-row">
-            <el-checkbox v-model="selectedModels[key]" :label="info.name" size="large" />
-            <div v-if="selectedModels[key]" class="threshold-slider">
+            <div class="model-name-row">
+              <span class="model-name">{{ info.name }}</span>
+              <el-tag v-if="selectedModels[key]" size="small" type="success" effect="plain">已启用</el-tag>
+              <el-tag v-else size="small" type="info" effect="plain">未启用</el-tag>
+            </div>
+            <div v-if="selectedModels[key]" class="threshold-display">
               <span class="threshold-label">置信度: {{ (modelThresholds[key] * 100).toFixed(0) }}%</span>
-              <el-slider
-                v-model="modelThresholds[key]"
-                :min="0.05"
-                :max="0.95"
-                :step="0.05"
-                size="small"
-                style="width: 160px"
-              />
             </div>
-            <div v-if="selectedModels[key] && info.danger_rules" class="danger-rules-inline">
-              <el-checkbox v-model="dangerRules.detect_no_hardhat" size="small">未戴安全帽</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_no_mask" size="small">未戴口罩</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_no_safety_vest" size="small">未穿背心</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_near_machinery_or_vehicle" size="small">靠近机械/车辆</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_in_restricted_area" size="small">锥形桶管控区</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_in_utility_pole_restricted_area" size="small">电线杆管控区</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_machinery_close_to_pole" size="small">杆旁机械</el-checkbox>
+            <div v-if="selectedModels[key] && info.danger_rules" class="danger-rules-display">
+              <span class="danger-rule-hint">危险规则:</span>
+              <el-tag v-if="dangerRules.detect_no_hardhat" size="small" type="danger" effect="plain">未戴安全帽</el-tag>
+              <el-tag v-if="dangerRules.detect_no_mask" size="small" type="warning" effect="plain">未戴口罩</el-tag>
+              <el-tag v-if="dangerRules.detect_no_safety_vest" size="small" type="warning" effect="plain">未穿背心</el-tag>
+              <el-tag v-if="dangerRules.detect_in_restricted_area" size="small" type="warning" effect="plain">锥形桶管控区</el-tag>
+              <el-tag v-if="dangerRules.detect_in_utility_pole_restricted_area" size="small" type="warning" effect="plain">电线杆管控区</el-tag>
+              <el-tag v-if="dangerRules.detect_machinery_close_to_pole" size="small" type="warning" effect="plain">杆旁机械</el-tag>
             </div>
+            <div v-else-if="selectedModels[key] && key === 'fire'" class="danger-rules-display">
+              <span class="danger-rule-hint">检测类型:</span>
+              <el-tag size="small" type="danger" effect="plain">火焰</el-tag>
+              <el-tag size="small" type="warning" effect="plain">烟雾</el-tag>
+            </div>
+          </div>
+          <div class="config-edit-hint">
+            如需修改配置，请
+            <el-button link type="primary" @click="$router.push('/profiles')">前往检测配置管理</el-button>
           </div>
         </div>
       </el-collapse-transition>
@@ -316,13 +327,13 @@ function reset() {
     <el-collapse-transition>
       <div v-if="annotationMode === 'all' && currentFrame" class="class-filter-bar">
         <span class="class-filter-label">显示类别:</span>
-        <el-checkbox
-          v-for="cn in ALL_CLASS_NAMES"
-          :key="cn"
-          v-model="displayClasses[cn]"
-          size="small"
-          :label="cn"
-        />
+          <el-checkbox
+            v-for="cn in ALL_CLASS_NAMES"
+            :key="cn"
+            v-model="displayClasses[cn]"
+            size="small"
+            :label="CLASS_NAME_LABELS[cn]"
+          />
       </div>
     </el-collapse-transition>
     <el-row :gutter="20">
@@ -332,7 +343,9 @@ function reset() {
             <div style="display: flex; justify-content: space-between; align-items: center">
               <span>图片检测结果</span>
               <div style="display: flex; align-items: center; gap: 12px">
-                <el-button v-if="currentFrame" size="small" @click="reset">重新上传</el-button>
+                <el-button v-if="currentFrame && !detections.length" size="small" type="primary" :disabled="detecting" @click="startDetect">{{ detecting ? '检测中...' : '开始检测' }}</el-button>
+                <el-button v-if="currentFrame && detections.length" size="small" type="primary" :disabled="detecting" @click="startDetect">{{ detecting ? '检测中...' : '重新检测' }}</el-button>
+                <el-button v-if="currentFrame && detections.length" size="small" :disabled="detecting" @click="reset">重新上传</el-button>
               </div>
             </div>
           </template>
@@ -381,16 +394,10 @@ function reset() {
       </el-col>
 
       <el-col :span="8">
-        <ViolationWarning v-if="filteredViolations.length > 0" :violations="filteredViolations" />
+        <ViolationWarning :violations="filteredViolations" />
       </el-col>
     </el-row>
 
-    <DetectionProfileDialog
-      v-model="dialogVisible"
-      :profile="null"
-      profile-type="image"
-      @save="handleSaveProfile"
-    />
   </div>
 </template>
 
@@ -411,6 +418,41 @@ function reset() {
   align-items: center;
   gap: 20px;
   flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.model-config-row:last-child {
+  margin-bottom: 0;
+}
+.model-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.model-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.threshold-display {
+  font-size: 13px;
+  color: #666;
+}
+.danger-rules-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.danger-rule-hint {
+  font-size: 12px;
+  color: #999;
+  margin-right: 4px;
+}
+.config-edit-hint {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0f0;
+  font-size: 13px;
+  color: #999;
 }
 .threshold-slider {
   display: flex;

@@ -34,8 +34,6 @@ const VIOLATION_TYPES: Record<string, string> = {
   warning_no_hardhat: '⚠ 未戴安全帽',
   warning_no_mask: '⚠ 未戴口罩',
   warning_no_safety_vest: '⚠ 未穿反光背心',
-  warning_close_to_machinery: '⚠ 靠近作业机械',
-  warning_close_to_vehicle: '⚠ 靠近施工车辆',
   warning_people_in_controlled_area: '⚠ 进入管控区',
   warning_people_in_utility_pole_controlled_area: '⚠ 进入电线杆管控区',
   warning_fire: '🔥 火焰',
@@ -46,12 +44,10 @@ const VIOLATION_COLORS: Record<string, string> = {
   warning_no_hardhat: '#F44336',
   warning_no_mask: '#FF9800',
   warning_no_safety_vest: '#FF9800',
-  warning_close_to_machinery: '#9C27B0',
-  warning_close_to_vehicle: '#00BCD4',
   warning_people_in_controlled_area: '#FFC107',
   warning_people_in_utility_pole_controlled_area: '#795548',
-  warning_fire: '#D32F2F',
-  warning_smoke: '#9E9E9E',
+  warning_fire: '#F44336',
+  warning_smoke: '#E53935',
 }
 
 const CLASS_COLORS: Record<string, string> = {
@@ -78,10 +74,15 @@ function draw() {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  canvas.width = img.naturalWidth || 640
-  canvas.height = img.naturalHeight || 480
+  const w = img.naturalWidth || 640
+  const h = img.naturalHeight || 480
+  canvas.width = w
+  canvas.height = h
+  canvas.style.aspectRatio = `${w} / ${h}`
+  canvas.style.width = '100%'
+  canvas.style.height = 'auto'
 
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+  ctx.drawImage(img, 0, 0, w, h)
 
   // Draw cone polygons (semi-transparent yellow)
   if (props.conePolygons) {
@@ -119,7 +120,7 @@ function draw() {
     }
   }
 
-  const baseWidth = Math.max(3, canvas.width / 200)
+  const baseWidth = Math.max(2, canvas.width / 300)
   const fontSize = Math.max(14, canvas.width / 56)
 
   for (const det of props.detections) {
@@ -129,7 +130,7 @@ function draw() {
     const color = isViolation
       ? (VIOLATION_COLORS[vl[0]] || '#F44336')
       : (CLASS_COLORS[det.class_name] || '#FFFFFF')
-    const lineWidth = isViolation ? baseWidth * 3 : baseWidth
+    const lineWidth = isViolation ? baseWidth * 2 : baseWidth
 
     ctx.strokeStyle = color
     ctx.lineWidth = lineWidth
@@ -177,5 +178,5 @@ onMounted(() => {
 </script>
 
 <template>
-  <canvas ref="canvasRef" style="width: 100%; max-width: 100%; height: auto; display: block; border-radius: 4px" />
+  <canvas ref="canvasRef" style="width: 100%; display: block; border-radius: 4px" />
 </template>

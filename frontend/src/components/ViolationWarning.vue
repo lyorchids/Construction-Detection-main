@@ -7,11 +7,12 @@ const props = defineProps<{
 
 const expanded = ref(false)
 
+const hasData = computed(() => props.violations.length > 0)
+
 const VIOLATION_LABELS: Record<string, string> = {
   warning_no_hardhat: '未戴安全帽',
+  warning_no_mask: '未佩戴口罩',
   warning_no_safety_vest: '未穿反光背心',
-  warning_close_to_machinery: '靠近作业机械',
-  warning_close_to_vehicle: '靠近施工车辆',
   warning_people_in_controlled_area: '进入锥形桶管控区',
   warning_people_in_utility_pole_controlled_area: '进入电线杆管控区',
   warning_fire: '检测到火焰',
@@ -20,9 +21,8 @@ const VIOLATION_LABELS: Record<string, string> = {
 
 const VIOLATION_ICONS: Record<string, string> = {
   warning_no_hardhat: '🚫',
+  warning_no_mask: '😷',
   warning_no_safety_vest: '🦺',
-  warning_close_to_machinery: '⚠️',
-  warning_close_to_vehicle: '⚠️',
   warning_people_in_controlled_area: '🚧',
   warning_people_in_utility_pole_controlled_area: '⚡',
   warning_fire: '🔥',
@@ -39,42 +39,51 @@ const remainingViolations = computed(() => props.violations.slice(1))
       <div class="violation-header">
         <span class="violation-header-icon">🚨</span>
         <span class="violation-header-title">违规告警</span>
-        <el-tag size="small" type="danger" effect="dark" round class="violation-badge">
+        <el-tag v-if="hasData" size="small" type="danger" effect="dark" round class="violation-badge">
           {{ violations.length }}项
         </el-tag>
       </div>
     </template>
 
-    <div class="violation-body">
-      <div class="violation-row primary-row">
-        <span class="vio-icon">{{ VIOLATION_ICONS[firstViolation.type] || '🔴' }}</span>
-        <span class="vio-label">{{ VIOLATION_LABELS[firstViolation.type] || firstViolation.type }}</span>
-        <span class="vio-count">{{ firstViolation.count }}次</span>
+    <template v-if="!hasData">
+      <div class="empty-state">
+        <span class="empty-icon">🛡️</span>
+        <p class="empty-text">暂无检测数据</p>
       </div>
+    </template>
 
-      <template v-if="remainingViolations.length > 0">
-        <Transition name="slide">
-          <div v-if="expanded" class="remaining-list">
-            <div v-for="v in remainingViolations" :key="v.type" class="violation-row secondary-row">
-              <span class="vio-icon">{{ VIOLATION_ICONS[v.type] || '🔴' }}</span>
-              <span class="vio-label">{{ VIOLATION_LABELS[v.type] || v.type }}</span>
-              <span class="vio-count">{{ v.count }}次</span>
-            </div>
-          </div>
-        </Transition>
-
-        <div class="expand-bar">
-          <el-button text type="primary" size="small" @click="expanded = !expanded">
-            <template v-if="expanded">
-              收起 ▲
-            </template>
-            <template v-else>
-              展开全部 ({{ remainingViolations.length }}项) ▼
-            </template>
-          </el-button>
+    <template v-else>
+      <div class="violation-body">
+        <div class="violation-row primary-row">
+          <span class="vio-icon">{{ VIOLATION_ICONS[firstViolation.type] || '🔴' }}</span>
+          <span class="vio-label">{{ VIOLATION_LABELS[firstViolation.type] || firstViolation.type }}</span>
+          <span class="vio-count">{{ firstViolation.count }}次</span>
         </div>
-      </template>
-    </div>
+
+        <template v-if="remainingViolations.length > 0">
+          <Transition name="slide">
+            <div v-if="expanded" class="remaining-list">
+              <div v-for="v in remainingViolations" :key="v.type" class="violation-row secondary-row">
+                <span class="vio-icon">{{ VIOLATION_ICONS[v.type] || '🔴' }}</span>
+                <span class="vio-label">{{ VIOLATION_LABELS[v.type] || v.type }}</span>
+                <span class="vio-count">{{ v.count }}次</span>
+              </div>
+            </div>
+          </Transition>
+
+          <div class="expand-bar">
+            <el-button text type="primary" size="small" @click="expanded = !expanded">
+              <template v-if="expanded">
+                收起 ▲
+              </template>
+              <template v-else>
+                展开全部 ({{ remainingViolations.length }}项) ▼
+              </template>
+            </el-button>
+          </div>
+        </template>
+      </div>
+    </template>
   </el-card>
 </template>
 
@@ -168,6 +177,25 @@ const remainingViolations = computed(() => props.violations.slice(1))
   text-align: center;
   padding-top: 8px;
   border-top: 1px dashed #e0e0e0;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.empty-icon {
+  font-size: 48px;
+  opacity: 0.3;
+}
+
+.empty-text {
+  margin-top: 12px;
+  color: #999;
+  font-size: 14px;
 }
 
 .slide-enter-active,

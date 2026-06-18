@@ -10,12 +10,7 @@ const totalCount = ref(0)
 const totalViolations = ref(0)
 const loading = ref(false)
 
-const vNoHardhat = ref(0)
-const vNoSafetyVest = ref(0)
-const vCloseMachinery = ref(0)
-const vCloseVehicle = ref(0)
-const vInControlledArea = ref(0)
-const vInPoleArea = ref(0)
+const dynamicViolations = ref<{ label: string; count: number }[]>([])
 
 const pieChartRef = ref<HTMLDivElement | null>(null)
 const lineChartRef = ref<HTMLDivElement | null>(null)
@@ -24,9 +19,12 @@ let lineChart: echarts.ECharts | null = null
 
 const VIOLATION_LABELS: Record<string, string> = {
   warning_no_hardhat: '未戴安全帽',
-  warning_close_to_machinery: '靠近作业机械',
-  warning_close_to_vehicle: '靠近施工车辆',
+  warning_no_mask: '未佩戴口罩',
+  warning_no_safety_vest: '未穿反光背心',
   warning_people_in_controlled_area: '进入管控区',
+  warning_people_in_utility_pole_controlled_area: '进入电线杆管控区',
+  warning_fire: '检测到火焰',
+  warning_smoke: '检测到烟雾',
 }
 
 async function fetchStats() {
@@ -38,13 +36,15 @@ async function fetchStats() {
     todayCount.value = data.today_records
     todayViolations.value = data.today_violations
 
-    if (data.violation_by_type_detail) {
-      vNoHardhat.value = data.violation_by_type_detail.no_hardhat || 0
-      vNoSafetyVest.value = data.violation_by_type_detail.no_safety_vest || 0
-      vCloseMachinery.value = data.violation_by_type_detail.close_to_machinery || 0
-      vCloseVehicle.value = data.violation_by_type_detail.close_to_vehicle || 0
-      vInControlledArea.value = data.violation_by_type_detail.in_controlled_area || 0
-      vInPoleArea.value = data.violation_by_type_detail.in_pole_area || 0
+    if (data.violation_by_type) {
+      const sorted = Object.entries(data.violation_by_type)
+        .filter(([, count]) => count > 0)
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 6)
+      dynamicViolations.value = sorted.map(([type, count]) => ({
+        label: VIOLATION_LABELS[type] || type,
+        count,
+      }))
     }
 
     renderPieChart(data.violation_by_type)
@@ -166,35 +166,10 @@ onUnmounted(() => {
       </el-col>
     </el-row>
 
-    <el-row :gutter="20" style="margin-top: 20px">
-      <el-col :span="4">
+    <el-row :gutter="20" style="margin-top: 20px" v-if="dynamicViolations.length">
+      <el-col :span="Math.floor(24 / dynamicViolations.length)" v-for="v in dynamicViolations" :key="v.label">
         <el-card shadow="hover">
-          <el-statistic title="未戴安全帽" :value="vNoHardhat" />
-        </el-card>
-      </el-col>
-      <el-col :span="4">
-        <el-card shadow="hover">
-          <el-statistic title="未穿反光背心（警告）" :value="vNoSafetyVest" />
-        </el-card>
-      </el-col>
-      <el-col :span="4">
-        <el-card shadow="hover">
-          <el-statistic title="靠近作业机械" :value="vCloseMachinery" />
-        </el-card>
-      </el-col>
-      <el-col :span="4">
-        <el-card shadow="hover">
-          <el-statistic title="靠近施工车辆" :value="vCloseVehicle" />
-        </el-card>
-      </el-col>
-      <el-col :span="4">
-        <el-card shadow="hover">
-          <el-statistic title="进入管控区" :value="vInControlledArea" />
-        </el-card>
-      </el-col>
-      <el-col :span="4">
-        <el-card shadow="hover">
-          <el-statistic title="进入电线杆区域" :value="vInPoleArea" />
+          <el-statistic :title="v.label" :value="v.count" />
         </el-card>
       </el-col>
     </el-row>

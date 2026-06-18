@@ -11,12 +11,14 @@ from typing import Any
 import cv2
 from fastapi import WebSocket
 
-from app.config import VIOLATION_DIR
+from app.config import UPLOAD_VIDEO_DIR, VIOLATION_DIR
 from app.core.annotator import draw_annotations
 from app.core.danger_rules import DangerDetector
 from app.core.model_registry import ModelRegistry
-from app.core.violation_state import PersonStateManager
+from sqlalchemy import update as sql_update
+
 from app.database import SessionLocal
+from app.models.detection import DetectionRecord
 from app.services import detection_service
 
 logger = logging.getLogger(__name__)
@@ -27,7 +29,7 @@ class VideoStreamer:
 
     Features:
     - Time-interval based detection (configurable interval in seconds)
-    - Per-person violation state machine (hysteresis + cooldown)
+    - Direct violation counting from DangerDetector (max concurrent per type)
     - Ultralytics built-in ByteTrack for person tracking
     """
 
@@ -40,70 +42,18 @@ class VideoStreamer:
         self.save_screenshots = True
         self._paused = False
         self._stopped = False
-        self._seen_person_violations: set[tuple[str | int, str]] = set()
         self._saved_violation_types: set[str] = set()
         self._violation_type_screenshot: dict[str, tuple[str, int]] = {}
         self.models: list[str] = ['ppe']
         self.thresholds: dict[str, float] = {}
-        self.detection_interval: float = 1.0
-
-        # State machine manager
-        self._state_manager = PersonStateManager()
+        self.detection_interval: float = 0.5
 
         # Cache for non-detection frames
         self._cached_raw: list[Any] = []
         self._cached_tracked: list[Any] = []
         self._cached_cone_polygons: list[list[list[float]]] = []
         self._cached_pole_polygons: list[list[list[float]]] = []
-
-    def _match_violation_objects_to_tracks(
-        self,
-        violations_objects: list[dict],
-        tracked: list,
-    ) -> dict[tuple[str, int | str], dict]:
-        """Match violation object bboxes to tracked persons by IoU.
-
-        Returns {(violation_type, track_id): info_dict}.
-        """
-        result: dict[tuple[str, int | str], dict] = {}
-
-        for vobj in violations_objects:
-            vtype = vobj['type']
-            vbbox = vobj['bbox']
-            vconf = vobj.get('confidence', 0.0)
-
-            best_iou = 0.3
-            best_track: int | str | None = None
-
-            for d in tracked:
-                if d.class_id != 5:
-                    continue
-                iou = self._bbox_iou(vbbox, d.bbox)
-                if iou > best_iou and d.track_id is not None:
-                    best_iou = iou
-                    best_track = d.track_id
-
-            if best_track is None:
-                best_track = -1
-
-            key = (vtype, best_track)
-            if key not in result or vconf > result[key].get('confidence', 0):
-                result[key] = {'bbox': vbbox, 'confidence': vconf}
-
-        return result
-
-    @staticmethod
-    def _bbox_iou(bbox1: list[float], bbox2: list[float]) -> float:
-        x1 = max(bbox1[0], bbox2[0])
-        y1 = max(bbox1[1], bbox2[1])
-        x2 = min(bbox1[2], bbox2[2])
-        y2 = min(bbox1[3], bbox2[3])
-        inter = max(0, x2 - x1) * max(0, y2 - y1)
-        if inter == 0:
-            return 0.0
-        area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
-        area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
-        return inter / (area1 + area2 - inter)
+        self._cached_warnings: dict[str, Any] = {}
 
     async def stream(
         self,
@@ -142,6 +92,7 @@ class VideoStreamer:
         })
 
         frame_number = 0
+        frame_start = time.time()
         start_time = time.time()
         total_objects = 0
         unique_violations = 0
@@ -158,11 +109,12 @@ class VideoStreamer:
             violation_count=0,
             duration=duration,
             v_no_hardhat=violation_type_counts.get('warning_no_hardhat', 0),
+            v_no_mask=violation_type_counts.get('warning_no_mask', 0),
             v_no_safety_vest=violation_type_counts.get('warning_no_safety_vest', 0),
-            v_close_to_machinery=violation_type_counts.get('warning_close_to_machinery', 0),
-            v_close_to_vehicle=violation_type_counts.get('warning_close_to_vehicle', 0),
             v_in_controlled_area=violation_type_counts.get('warning_people_in_controlled_area', 0),
             v_in_pole_area=violation_type_counts.get('warning_people_in_utility_pole_controlled_area', 0),
+            v_fire=violation_type_counts.get('warning_fire', 0),
+            v_smoke=violation_type_counts.get('warning_smoke', 0),
         )
         db.commit()
         record_id = record.id
@@ -170,7 +122,6 @@ class VideoStreamer:
         pending_violations: list[tuple] = []
         detection_count = 0
         self._last_detection_time = 0.0
-        self._state_manager.reset()
 
         try:
             while not self._stopped:
@@ -190,7 +141,6 @@ class VideoStreamer:
                 should_detect = (now - self._last_detection_time) >= self.detection_interval
 
                 all_warnings: dict[str, Any] = {}
-                new_violation_events: list[tuple] = []
                 cone_polygons: list[list[list[float]]] = []
                 pole_polygons: list[list[list[float]]] = []
 
@@ -239,6 +189,12 @@ class VideoStreamer:
                                     else:
                                         c = v.get('count', 0)
                                         all_warnings[k]['count'] = all_warnings[k].get('count', 0) + c
+                                for k, v in warnings_only.items():
+                                    if k not in all_warnings:
+                                        all_warnings[k] = v
+                                    else:
+                                        c = v.get('count', 0)
+                                        all_warnings[k]['count'] = all_warnings[k].get('count', 0) + c
                         else:
                             violation_map = cfg.get('violation_types', {})
                             for r in raw:
@@ -259,56 +215,115 @@ class VideoStreamer:
                     if pole_polygons:
                         self._cached_pole_polygons = pole_polygons
 
-                    # --- State machine based violation detection ---
-                    new_violation_events = self._process_violations_with_state(
-                        all_tracked, all_warnings, frame_number, timestamp,
-                    )
-                    unique_violations += len(new_violation_events)
-                    active_track_ids: set[int] = set()
-                    for d in all_tracked:
-                        if d.track_id is not None:
-                            active_track_ids.add(d.track_id)
-                    self._state_manager.clean_stale(active_track_ids)
+                    # --- Direct violation counting (no state machine) ---
+                    self._cached_warnings = all_warnings
+                    for vtype, vdata in all_warnings.items():
+                        if not isinstance(vdata, dict):
+                            continue
+                        count = vdata.get('count', 0)
+                        if count <= 0:
+                            continue
 
-                    if new_violation_events:
-                        for vtype, tid, bbox, conf in new_violation_events:
-                            violation_type_counts[vtype] = violation_type_counts.get(vtype, 0) + 1
-                            pending_violations.append((
-                                vtype, bbox, conf, frame_number, timestamp,
-                            ))
+                        # Track max count per violation type across frames
+                        if count > violation_type_counts.get(vtype, 0):
+                            violation_type_counts[vtype] = count
 
-                            if self.save_screenshots and vtype not in self._saved_violation_types:
-                                if vtype in ('warning_no_safety_vest', 'warning_no_mask', 'warning_fire', 'warning_smoke'):
-                                    continue
+                        # Save first occurrence as pending violation record
+                        if not any(p[0] == vtype for p in pending_violations):
+                            objects = vdata.get('objects', [])
+                            if objects:
+                                obj = objects[0]
+                                pending_violations.append((
+                                    vtype, obj['bbox'], obj.get('confidence', 0.0),
+                                    frame_number, timestamp,
+                                ))
+                            else:
+                                pending_violations.append((
+                                    vtype, [0, 0, 0, 0], 1.0,
+                                    frame_number, timestamp,
+                                ))
+
+                    # Fallback: ensure no-mask/fire/smoke are counted from raw detections
+                    ppe_mask = len([d for d in all_raw_detections if d.source_model == 'ppe' and d.class_id == 3])
+                    fire_cnt = len([d for d in all_raw_detections if d.source_model == 'fire' and d.class_id == 0])
+                    smoke_cnt = len([d for d in all_raw_detections if d.source_model == 'fire' and d.class_id == 1])
+                    for vtype, cnt in [('warning_no_mask', ppe_mask), ('warning_fire', fire_cnt), ('warning_smoke', smoke_cnt)]:
+                        if cnt:
+                            violation_type_counts[vtype] = max(violation_type_counts.get(vtype, 0), cnt)
+                            if not any(p[0] == vtype for p in pending_violations):
+                                pending_violations.append((vtype, [0, 0, 0, 0], 1.0, frame_number, timestamp))
+
+                    # Batch screenshot: one per detection frame covering all present types
+                    if self.save_screenshots:
+                        types_needing_screenshot = [
+                            vtype for vtype in all_warnings
+                            if isinstance(all_warnings[vtype], dict)
+                            and all_warnings[vtype].get('count', 0) > 0
+                            and vtype not in self._saved_violation_types
+                        ]
+                        if types_needing_screenshot:
+                            try:
                                 filename = f"{uuid.uuid4().hex[:12]}.jpg"
                                 screenshot_path = VIOLATION_DIR / filename
-                                annotated = draw_annotations(frame, all_tracked, all_warnings)
-                                cv2.imwrite(
+                                annotated = draw_annotations(frame, [], all_warnings)
+                                success = cv2.imwrite(
                                     str(screenshot_path), annotated,
                                     [cv2.IMWRITE_JPEG_QUALITY, 85],
                                 )
-                                self._saved_violation_types.add(vtype)
-                                self._violation_type_screenshot[vtype] = (filename, frame_number)
+                                if success:
+                                    for vtype in types_needing_screenshot:
+                                        self._saved_violation_types.add(vtype)
+                                        self._violation_type_screenshot[vtype] = (filename, frame_number)
+                                else:
+                                    logger.error(f"Failed to save screenshot: {screenshot_path}")
+                            except Exception:
+                                logger.exception("Error saving batch screenshot")
 
-                # Build violation state info (every frame)
-                active_counts = self._state_manager.get_active_violation_counts(timestamp)
-                violation_bboxes = [
-                    {'type': vtype, 'count': count}
-                    for vtype, count in active_counts.items()
-                ]
+                    unique_violations = len(pending_violations)
 
-                # Get per-track active violations for is_violation marking
-                active_viols = self._state_manager.get_active_violations(timestamp)
-                violating_tracks: dict[int, list[str]] = {}
-                active_vtype_set: set[str] = set()
-                for av in active_viols:
-                    tid = av['track_id']
-                    vtype = av['type']
-                    active_vtype_set.add(vtype)
-                    violating_tracks.setdefault(tid, []).append(vtype)
-
-                detections_payload = [
-                    {
+                # Violation markers only on detection frames
+                if should_detect:
+                    violation_bboxes = [
+                        {'type': vtype, 'count': count}
+                        for vtype, count in violation_type_counts.items()
+                        if count > 0
+                    ]
+                    warning_obj_bboxes: dict[str, list[list[float]]] = {}
+                    for vtype, vdata in self._cached_warnings.items():
+                        if not isinstance(vdata, dict):
+                            continue
+                        bboxes = [obj['bbox'] for obj in vdata.get('objects', [])]
+                        if bboxes:
+                            warning_obj_bboxes[vtype] = bboxes
+                    vtype_set = set(violation_type_counts.keys())
+                else:
+                    violation_bboxes = []
+                    vtype_set: set[str] = set()
+                    warning_obj_bboxes: dict[str, list[list[float]]] = {}
+                detections_payload = []
+                for d in self._cached_tracked:
+                    labels: list[str] = []
+                    if d.class_id == 2 and 'warning_no_hardhat' in vtype_set:
+                        labels.append('warning_no_hardhat')
+                    if d.class_id == 3 and 'warning_no_mask' in vtype_set:
+                        labels.append('warning_no_mask')
+                    if d.class_id == 4 and 'warning_no_safety_vest' in vtype_set:
+                        labels.append('warning_no_safety_vest')
+                    if d.class_name == 'Fire' and 'warning_fire' in vtype_set:
+                        labels.append('warning_fire')
+                    if d.class_name == 'Smoke' and 'warning_smoke' in vtype_set:
+                        labels.append('warning_smoke')
+                    if d.class_id == 5:
+                        cx = (d.bbox[0] + d.bbox[2]) / 2.0
+                        cy = (d.bbox[1] + d.bbox[3]) / 2.0
+                        for vtype in ('warning_people_in_controlled_area', 'warning_people_in_utility_pole_controlled_area'):
+                            if vtype not in vtype_set:
+                                continue
+                            for wbbox in warning_obj_bboxes.get(vtype, []):
+                                if wbbox[0] <= cx <= wbbox[2] and wbbox[1] <= cy <= wbbox[3]:
+                                    labels.append(vtype)
+                                    break
+                    detections_payload.append({
                         'bbox': d.bbox,
                         'confidence': d.confidence,
                         'class_id': d.class_id,
@@ -316,19 +331,9 @@ class VideoStreamer:
                         'track_id': d.track_id,
                         'is_moving': d.is_moving,
                         'source_model': d.source_model,
-                        'is_violation': (
-                            d.track_id in violating_tracks
-                            or (d.class_name == 'Fire' and 'warning_fire' in active_vtype_set)
-                            or (d.class_name == 'Smoke' and 'warning_smoke' in active_vtype_set)
-                        ),
-                        'violation_labels': (
-                            violating_tracks.get(d.track_id, [])
-                            + (['warning_fire'] if d.class_name == 'Fire' and 'warning_fire' in active_vtype_set else [])
-                            + (['warning_smoke'] if d.class_name == 'Smoke' and 'warning_smoke' in active_vtype_set else [])
-                        ),
-                    }
-                    for d in self._cached_tracked
-                ]
+                        'is_violation': len(labels) > 0,
+                        'violation_labels': labels,
+                    })
 
                 _, buffer = cv2.imencode(
                     '.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80],
@@ -348,33 +353,14 @@ class VideoStreamer:
 
                 await websocket.send_json(frame_data)
 
+                # Throttle to real-time playback speed
+                elapsed = time.time() - frame_start
+                sleep_time = (1.0 / fps) - elapsed
+                if sleep_time > 0:
+                    await asyncio.sleep(sleep_time)
+                frame_start = time.time()
+
             if frame_number > 0:
-                for vtype, bbox, conf, fn, ts in pending_violations:
-                    if vtype in ('warning_no_safety_vest', 'warning_no_mask', 'warning_fire', 'warning_smoke'):
-                        continue
-                    screenshot = self._violation_type_screenshot.get(vtype)
-                    screenshot_path = f'/violations/{screenshot[0]}' if screenshot else ''
-                    detection_service.create_violation(
-                        db,
-                        record_id=record_id,
-                        violation_type=vtype,
-                        bbox=bbox,
-                        confidence=conf,
-                        frame_number=fn,
-                        timestamp=ts,
-                        screenshot_path=screenshot_path,
-                    )
-
-                record.total_objects = total_objects
-                record.violation_count = unique_violations
-                record.v_no_hardhat = violation_type_counts.get('warning_no_hardhat', 0)
-                record.v_no_safety_vest = violation_type_counts.get('warning_no_safety_vest', 0)
-                record.v_close_to_machinery = violation_type_counts.get('warning_close_to_machinery', 0)
-                record.v_close_to_vehicle = violation_type_counts.get('warning_close_to_vehicle', 0)
-                record.v_in_controlled_area = violation_type_counts.get('warning_people_in_controlled_area', 0)
-                record.v_in_pole_area = violation_type_counts.get('warning_people_in_utility_pole_controlled_area', 0)
-                db.commit()
-
                 await websocket.send_json({
                     'type': 'complete',
                     'record_id': record_id,
@@ -393,13 +379,68 @@ class VideoStreamer:
             except Exception:
                 pass
         finally:
+            # Always persist record to DB, even if streaming error occurred
+            try:
+                if frame_number > 0:
+                    # 1) Save record counts first (independent from violations)
+                    try:
+                        db.execute(
+                            sql_update(DetectionRecord)
+                            .where(DetectionRecord.id == record_id)
+                            .values(
+                                total_objects=total_objects,
+                                violation_count=unique_violations,
+                                v_no_hardhat=violation_type_counts.get('warning_no_hardhat', 0),
+                                v_no_mask=violation_type_counts.get('warning_no_mask', 0),
+                                v_no_safety_vest=violation_type_counts.get('warning_no_safety_vest', 0),
+                                v_in_controlled_area=violation_type_counts.get('warning_people_in_controlled_area', 0),
+                                v_in_pole_area=violation_type_counts.get('warning_people_in_utility_pole_controlled_area', 0),
+                                v_fire=violation_type_counts.get('warning_fire', 0),
+                                v_smoke=violation_type_counts.get('warning_smoke', 0),
+                            ),
+                        )
+                        db.commit()
+                    except Exception as e2:
+                        logger.error(f"Failed to update record counts: {e2}")
+                        db.rollback()
+
+                    # 2) Save violation records (best-effort, each independently)
+                    for vtype, bbox, conf, fn, ts in pending_violations:
+                        try:
+                            screenshot = self._violation_type_screenshot.get(vtype)
+                            screenshot_path = f'/violations/{screenshot[0]}' if screenshot else ''
+                            detection_service.create_violation(
+                                db,
+                                record_id=record_id,
+                                violation_type=vtype,
+                                bbox=bbox,
+                                confidence=conf,
+                                frame_number=fn,
+                                timestamp=ts,
+                                screenshot_path=screenshot_path,
+                            )
+                        except Exception as e2:
+                            logger.error(f"Failed to save violation {vtype}: {e2}")
+                            db.rollback()
+            except Exception as e2:
+                logger.error(f"Failed to save final record: {e2}")
+                db.rollback()
+
             db.close()
             cap.release()
+
+            # Delete original video file after detection completes
+            video_file = Path(normalized_path)
+            if video_file.exists() and str(video_file).startswith(str(UPLOAD_VIDEO_DIR)):
+                try:
+                    video_file.unlink()
+                    logger.info(f"Deleted original video: {video_file}")
+                except Exception as e:
+                    logger.error(f"Failed to delete video {video_file}: {e}")
+
             self._stopped = False
-            self._seen_person_violations.clear()
             self._saved_violation_types.clear()
             self._violation_type_screenshot.clear()
-            self._state_manager.reset()
             self._cached_raw.clear()
             self._cached_tracked.clear()
             self._cached_cone_polygons.clear()
@@ -409,100 +450,6 @@ class VideoStreamer:
                 f"{detection_count} detection frames, "
                 f"{unique_violations} violations"
             )
-
-    def _process_violations_with_state(
-        self,
-        tracked: list,
-        warnings: dict[str, Any],
-        frame_number: int,
-        timestamp: float,
-    ) -> list[tuple[str, int | str, list[float], float]]:
-        """Process violations through per-person state machines.
-
-        Returns deduplicated violation events (with hysteresis + cooldown).
-        """
-        new_events: list[tuple[str, int | str, list[float], float]] = []
-        now = timestamp
-
-        for vtype, vdata in warnings.items():
-            if vtype in ('warning_fire', 'warning_smoke'):
-                fire_track_id = -2 if vtype == 'warning_fire' else -3
-                is_active = vdata.get('count', 0) > 0
-                triggered = self._state_manager.update_violation(
-                    fire_track_id, vtype, is_active,
-                    timestamp=now,
-                )
-                bbox = [0, 0, 0, 0]
-                if triggered:
-                    new_events.append((vtype, fire_track_id, bbox, 1.0))
-                continue
-
-            objects = vdata.get('objects', []) if isinstance(vdata, dict) else []
-            if not objects:
-                continue
-
-            if vtype == 'warning_no_hardhat':
-                violation_objects = [
-                    {'type': vtype, 'bbox': o['bbox'], 'confidence': o.get('confidence', 0.0)}
-                    for o in objects
-                ]
-            elif vtype == 'warning_no_mask':
-                violation_objects = [
-                    {'type': vtype, 'bbox': o['bbox'], 'confidence': o.get('confidence', 0.0)}
-                    for o in objects
-                ]
-            elif vtype == 'warning_no_safety_vest':
-                violation_objects = [
-                    {'type': vtype, 'bbox': o['bbox'], 'confidence': o.get('confidence', 0.0)}
-                    for o in objects
-                ]
-            elif vtype in (
-                'warning_close_to_machinery', 'warning_close_to_vehicle',
-                'warning_people_in_controlled_area',
-                'warning_people_in_utility_pole_controlled_area',
-            ):
-                violation_objects = [
-                    {'type': vtype, 'bbox': o['bbox'], 'confidence': o.get('confidence', 0.0)}
-                    for o in objects
-                ]
-            else:
-                continue
-
-            matched = self._match_violation_objects_to_tracks(violation_objects, tracked)
-            matched_track_ids: set[int] = set()
-            for (vtype_key, track_id), info in matched.items():
-                matched_track_ids.add(track_id)
-                triggered = self._state_manager.update_violation(
-                    track_id, vtype_key, True,
-                    bbox=info['bbox'], confidence=info['confidence'],
-                    timestamp=now,
-                )
-                if triggered:
-                    new_events.append((vtype_key, track_id, info['bbox'], info['confidence']))
-
-            # Only unmatched persons get False for this violation type
-            active_track_ids = {d.track_id for d in tracked if d.track_id is not None}
-            for tid in active_track_ids - matched_track_ids:
-                self._state_manager.update_violation(tid, vtype, False, timestamp=now)
-
-        # Absent violation types
-        present_vtypes = set(warnings.keys())
-        all_active_track_ids = {d.track_id for d in tracked if d.track_id is not None}
-        self._state_manager.mark_absent_violations(
-            all_active_track_ids, present_vtypes, now,
-        )
-
-        return new_events
-
-    def _find_new_violations(
-        self,
-        tracked: list,
-        warnings: dict[str, Any],
-        frame_number: int,
-        timestamp: float,
-    ) -> list[tuple[str, int | str, list[float], float]]:
-        """Delegates to state-machine method."""
-        return self._process_violations_with_state(tracked, warnings, frame_number, timestamp)
 
     def pause(self) -> None:
         self._paused = True

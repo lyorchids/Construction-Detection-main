@@ -12,8 +12,6 @@ from app.schemas.case import CaseCreate, CaseUpdate
 
 CASE_TYPE_MAP: dict[str, str] = {
     'warning_no_hardhat': 'no_hardhat',
-    'warning_close_to_machinery': 'dangerous_operation',
-    'warning_close_to_vehicle': 'dangerous_operation',
     'warning_people_in_controlled_area': 'dangerous_operation',
     'warning_people_in_utility_pole_controlled_area': 'dangerous_operation',
 }
@@ -26,8 +24,6 @@ CASE_TYPE_LABELS: dict[str, str] = {
 
 SEVERITY_MAP: dict[str, str] = {
     'warning_no_hardhat': 'high',
-    'warning_close_to_machinery': 'medium',
-    'warning_close_to_vehicle': 'medium',
     'warning_people_in_controlled_area': 'high',
     'warning_people_in_utility_pole_controlled_area': 'high',
     'warning_no_safety_vest': 'low',
@@ -81,8 +77,6 @@ def _build_description(record: DetectionRecord, violations: list[Violation]) -> 
     lines = [f'在"{record.filename}"的检测中，发现以下安全隐患：']
     labels = {
         'warning_no_hardhat': '未佩戴安全帽',
-        'warning_close_to_machinery': '靠近作业机械',
-        'warning_close_to_vehicle': '靠近施工车辆',
         'warning_people_in_controlled_area': '进入锥形桶管控区',
         'warning_people_in_utility_pole_controlled_area': '进入电线杆危险区域',
         'warning_no_safety_vest': '未穿反光背心',

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -23,7 +24,6 @@ router = APIRouter(prefix='/api/v1/report', tags=['report'])
 class AISummary(BaseModel):
     total_violations: int
     risk_level: str
-    violation_rate: str
 
 
 class AIBasicInfo(BaseModel):
@@ -33,6 +33,8 @@ class AIBasicInfo(BaseModel):
     detection_type: str
     detection_duration: float
     total_targets: int
+    analysis_period: Optional[str] = None
+    total_records: Optional[int] = None
 
 
 class AIReportViolation(BaseModel):
@@ -45,9 +47,9 @@ class AIReportViolation(BaseModel):
 
 
 class AISafetyAssessment(BaseModel):
-    ppe_compliance: str
-    proximity_compliance: str
-    restricted_area_compliance: str
+    overall_evaluation: str
+    risk_factors: list[str]
+    key_findings: str
 
 
 class AIReportResponse(BaseModel):
@@ -55,9 +57,16 @@ class AIReportResponse(BaseModel):
     basic_info: AIBasicInfo
     summary: AISummary
     violation_details: list[AIReportViolation]
+    daily_overview: Optional[dict] = None
     safety_assessment: AISafetyAssessment
     overall_suggestion: str
     expert_signature: str
+
+
+class AIAnalysisRequest(BaseModel):
+    record_id: Optional[int] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
 
 
 @router.post('/generate')
@@ -86,39 +95,21 @@ def generate_report(
 
 @router.post('/ai-analysis')
 def generate_ai_report(
-    record_id: Optional[int] = Query(None),
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
+    req: AIAnalysisRequest,
     db: Session = Depends(get_db),
 ) -> AIReportResponse:
-    """Generate AI-powered violation analysis report.
-
-    Args:
-        record_id: Specific record ID to analyze.
-        start_date: Optional start date filter.
-        end_date: Optional end date filter.
-
-    Returns:
-        AI generated analysis report.
-    """
+    """Generate AI-powered violation analysis report."""
     ai_service = get_ai_service()
-
-    if not ai_service.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail='AI service not available. Please set AI_API_KEY.',
-        )
-
-    start_dt = datetime.fromisoformat(start_date) if start_date else None
-    end_dt = datetime.fromisoformat(end_date) if end_date else None
+    start_dt = datetime.fromisoformat(req.start_date) if req.start_date else None
+    end_dt = datetime.fromisoformat(req.end_date) if req.end_date else None
 
     try:
-        if record_id:
-            record = detection_service.get_record(db, record_id)
+        if req.record_id:
+            record = detection_service.get_record(db, req.record_id)
             if not record:
                 raise HTTPException(status_code=404, detail='Record not found')
             records = [record]
-            violations = detection_service.get_violations(db, record_id)
+            violations = detection_service.get_violations(db, req.record_id)
         else:
             records, _ = detection_service.get_records(
                 db,
@@ -146,7 +137,11 @@ def generate_ai_report(
         if not violations:
             raise HTTPException(status_code=404, detail='No violations found')
 
-        report = ai_service.generate_violation_report(records, violations)
+        report = ai_service.generate_violation_report(
+            records, violations,
+            start_date=req.start_date,
+            end_date=req.end_date,
+        )
 
         bi = report.get('basic_info', {})
         sm = report.get('summary', {})
@@ -162,11 +157,13 @@ def generate_ai_report(
                 detection_type=str(bi.get('detection_type', 'video')),
                 detection_duration=float(bi.get('detection_duration', 0)),
                 total_targets=int(bi.get('total_targets', 0)),
+                analysis_period=bi.get('analysis_period'),
+                total_records=bi.get('total_records'),
             ),
+            daily_overview=report.get('daily_overview'),
             summary=AISummary(
                 total_violations=int(sm.get('total_violations', 0)),
                 risk_level=str(sm.get('risk_level', 'low')),
-                violation_rate=str(sm.get('violation_rate', '0%')),
             ),
             violation_details=[
                 AIReportViolation(
@@ -180,9 +177,9 @@ def generate_ai_report(
                 for v in vds
             ],
             safety_assessment=AISafetyAssessment(
-                ppe_compliance=sa.get('ppe_compliance', '0%'),
-                proximity_compliance=sa.get('proximity_compliance', '0%'),
-                restricted_area_compliance=sa.get('restricted_area_compliance', '0%'),
+                overall_evaluation=sa.get('overall_evaluation', '暂无评估'),
+                risk_factors=sa.get('risk_factors', ['暂无风险因素']),
+                key_findings=sa.get('key_findings', '暂无发现'),
             ),
             overall_suggestion=report.get('overall_suggestion', ''),
             expert_signature=report.get('expert_signature', 'AI安全专家'),
@@ -192,6 +189,73 @@ def generate_ai_report(
         raise
     except Exception as e:
         logger.error(f"AI report generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post('/ai-analysis/download')
+def download_ai_report(
+    req: AIAnalysisRequest,
+    db: Session = Depends(get_db),
+):
+    """Download AI analysis report as Word document with violation screenshots."""
+    ai_service = get_ai_service()
+    start_dt = datetime.fromisoformat(req.start_date) if req.start_date else None
+    end_dt = datetime.fromisoformat(req.end_date) if req.end_date else None
+
+    try:
+        if req.record_id:
+            record = detection_service.get_record(db, req.record_id)
+            if not record:
+                raise HTTPException(status_code=404, detail='Record not found')
+            records = [record]
+            violations = detection_service.get_violations(db, req.record_id)
+        else:
+            records, _ = detection_service.get_records(
+                db,
+                page=1,
+                page_size=1000,
+                start_date=start_dt,
+                end_date=end_dt,
+            )
+            record_ids = [r.id for r in records]
+            if record_ids:
+                all_violations = list(
+                    db.execute(
+                        select(Violation).where(Violation.record_id.in_(record_ids))
+                    )
+                    .scalars()
+                    .all()
+                )
+            else:
+                all_violations = []
+            violations = all_violations
+
+        if not records:
+            raise HTTPException(status_code=404, detail='No records found')
+
+        if not violations:
+            raise HTTPException(status_code=404, detail='No violations found')
+
+        report = ai_service.generate_violation_report(
+            records, violations,
+            start_date=req.start_date,
+            end_date=req.end_date,
+        )
+
+        from app.services import report_service as rs
+        file_path = rs.generate_ai_report_docx(records[0], violations, report)
+        filename = Path(file_path).name
+
+        return FileResponse(
+            str(file_path),
+            filename=filename,
+            media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"AI report download failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

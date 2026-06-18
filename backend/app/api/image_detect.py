@@ -244,13 +244,7 @@ def detect_image(req: ImageDetectRequest, db: Session = Depends(get_db)):
             d.violation_labels = labels
 
     ppe_detections = [d for d in all_detections if d.source_model == 'ppe']
-    violation_count = (
-        vtype_counts.get('warning_no_hardhat', 0)
-        + vtype_counts.get('warning_close_to_machinery', 0)
-        + vtype_counts.get('warning_close_to_vehicle', 0)
-        + vtype_counts.get('warning_people_in_controlled_area', 0)
-        + vtype_counts.get('warning_people_in_utility_pole_controlled_area', 0)
-    )
+    violation_count = sum(1 for v in vtype_counts.values() if v > 0)
 
     record = detection_service.create_record(
         db,
@@ -260,28 +254,22 @@ def detect_image(req: ImageDetectRequest, db: Session = Depends(get_db)):
         total_objects=len(all_detections),
         violation_count=violation_count,
         v_no_hardhat=vtype_counts.get('warning_no_hardhat', 0),
+        v_no_mask=vtype_counts.get('warning_no_mask', 0),
         v_no_safety_vest=vtype_counts.get('warning_no_safety_vest', 0),
-        v_close_to_machinery=vtype_counts.get('warning_close_to_machinery', 0),
-        v_close_to_vehicle=vtype_counts.get('warning_close_to_vehicle', 0),
         v_in_controlled_area=vtype_counts.get('warning_people_in_controlled_area', 0),
         v_in_pole_area=vtype_counts.get('warning_people_in_utility_pole_controlled_area', 0),
+        v_fire=vtype_counts.get('warning_fire', 0),
+        v_smoke=vtype_counts.get('warning_smoke', 0),
     )
 
     # Only save violation screenshot for PPE-related violations
-    real_warnings = {
-        k: v for k, v in vtype_counts.items()
-        if k not in ('warning_no_safety_vest', 'warning_no_mask', 'warning_fire', 'warning_smoke')
-    }
-
-    if real_warnings:
+    if vtype_counts:
         filename = f"{uuid.uuid4().hex[:12]}_frame0.jpg"
         screenshot_path = VIOLATION_DIR / filename
-        annotated = draw_annotations(frame, all_detections, all_warnings_raw)
+        annotated = draw_annotations(frame, [], all_warnings_raw)
         cv2.imwrite(str(screenshot_path), annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
         for vtype, vdata in vtype_counts.items():
-            if vtype in ('warning_no_safety_vest', 'warning_no_mask', 'warning_fire', 'warning_smoke'):
-                continue
             if vdata > 0:
                 detection_service.create_violation(
                     db,

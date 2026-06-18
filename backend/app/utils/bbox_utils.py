@@ -127,40 +127,6 @@ class Utils:
         return True
 
     @staticmethod
-    def is_dangerously_close(
-        person_bbox: list[float],
-        vehicle_bbox: list[float],
-        label: str,
-    ) -> bool:
-        person_width = person_bbox[2] - person_bbox[0]
-        person_height = person_bbox[3] - person_bbox[1]
-        person_area = person_width * person_height
-
-        vehicle_area = (vehicle_bbox[2] - vehicle_bbox[0]) * \
-            (vehicle_bbox[3] - vehicle_bbox[1])
-        acceptable_ratio = 0.1 if label == 'vehicle' else 0.05
-
-        if person_area / vehicle_area > acceptable_ratio:
-            return False
-
-        danger_distance_horizontal = 5 * person_width
-        danger_distance_vertical = 1.5 * person_height
-
-        horizontal_distance = min(
-            abs(person_bbox[2] - vehicle_bbox[0]),
-            abs(person_bbox[0] - vehicle_bbox[2]),
-        )
-        vertical_distance = min(
-            abs(person_bbox[3] - vehicle_bbox[1]),
-            abs(person_bbox[1] - vehicle_bbox[3]),
-        )
-
-        return (
-            horizontal_distance <= danger_distance_horizontal and
-            vertical_distance <= danger_distance_vertical
-        )
-
-    @staticmethod
     def detect_polygon_from_cones(
         datas: list[list[float]],
         clusterer: HDBSCAN,

@@ -3,12 +3,11 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { uploadVideo } from '../api/upload'
 import { getModels } from '../api'
-import { getProfiles, createProfile } from '../api/detection_profile'
+import { getProfiles } from '../api/detection_profile'
 import type { DetectionProfile } from '../api/detection_profile'
 import DetectionCanvas from '../components/DetectionCanvas.vue'
 import ViolationWarning from '../components/ViolationWarning.vue'
 import VideoTimeline from '../components/VideoTimeline.vue'
-import DetectionProfileDialog from '../components/DetectionProfileDialog.vue'
 import type { TimelineMarker } from '../components/VideoTimeline.vue'
 
 interface ModelInfo {
@@ -36,7 +35,7 @@ const timelineMarkers = ref<TimelineMarker[]>([])
 const loadingText = ref('正在连接检测服务...')
 
 // Annotation mode: 'all' = 全部标注, 'config' = 配置标注
-const annotationMode = ref<'all' | 'config'>('all')
+const annotationMode = ref<'all' | 'config'>('config')
 
 // Class filter for "全部标注" mode
 const ALL_CLASS_NAMES = [
@@ -57,14 +56,14 @@ const dangerRules = ref({
   detect_no_hardhat: true,
   detect_no_mask: true,
   detect_no_safety_vest: true,
-  detect_near_machinery_or_vehicle: true,
   detect_in_restricted_area: true,
   detect_in_utility_pole_restricted_area: false,
   detect_machinery_close_to_pole: false,
 })
 
 // Video-specific settings
-const detectionInterval = ref(1.0)
+const detectionInterval = ref(0.5)
+const everyFrame = ref(false)
 const saveScreenshots = ref(true)
 
 // Polygon overlays
@@ -74,7 +73,6 @@ const polePolygons = ref<number[][][]>([])
 // Profile state
 const profiles = ref<DetectionProfile[]>([])
 const selectedProfileId = ref<number | null>(null)
-const dialogVisible = ref(false)
 const configExpanded = ref(false)
 
 // Violation drawer
@@ -122,7 +120,6 @@ function compatRules(rules: Record<string, any>): Record<string, any> {
       detect_no_hardhat: val,
       detect_no_mask: val,
       detect_no_safety_vest: val,
-      detect_near_machinery_or_vehicle: rules.detect_near_machinery_or_vehicle ?? true,
       detect_in_restricted_area: rules.detect_in_restricted_area ?? true,
       detect_in_utility_pole_restricted_area: rules.detect_in_utility_pole_restricted_area ?? false,
       detect_machinery_close_to_pole: rules.detect_machinery_close_to_pole ?? false,
@@ -147,8 +144,14 @@ function applyProfile(profile: DetectionProfile) {
   if (ppe?.danger_rules) {
     dangerRules.value = { ...dangerRules.value, ...compatRules(ppe.danger_rules) }
   }
-  if (cfg.detection_interval != null) detectionInterval.value = cfg.detection_interval
-  else if (cfg.frame_interval != null) detectionInterval.value = Math.max(0.5, cfg.frame_interval / 30)
+  if (cfg.every_frame != null) everyFrame.value = cfg.every_frame
+  if (everyFrame.value) {
+    detectionInterval.value = 0
+  } else if (cfg.detection_interval != null) {
+    detectionInterval.value = cfg.detection_interval
+  } else if (cfg.frame_interval != null) {
+    detectionInterval.value = Math.max(0.5, cfg.frame_interval / 30)
+  }
   if (cfg.save_screenshots != null) saveScreenshots.value = cfg.save_screenshots
 }
 
@@ -158,20 +161,6 @@ function onProfileChange(profileId: number | string) {
   if (!id) return
   const profile = profiles.value.find(p => p.id === id)
   if (profile) applyProfile(profile)
-}
-
-async function saveAsProfile() {
-  dialogVisible.value = true
-}
-
-async function handleSaveProfile(data: any) {
-  try {
-    await createProfile(data)
-    ElMessage.success('配置已保存')
-    await loadProfiles()
-  } catch (error: any) {
-    ElMessage.error(error.response?.data?.detail || '保存失败')
-  }
 }
 
 const selectedModelKeys = computed(() =>
@@ -186,8 +175,19 @@ const filteredDetections = computed(() => {
   if (annotationMode.value === 'all') {
     return detections.value.filter((d: any) => displayClasses.value[d.class_name])
   }
-  // config mode: only Person + active violation targets
-  return detections.value.filter((d: any) => d.class_name === 'Person' || d.is_violation)
+  // config mode: show Person + violation-relevant classes from enabled models
+  const relevantClasses = new Set<string>()
+  relevantClasses.add('Person')
+  if (selectedModels.value['ppe']) {
+    relevantClasses.add('NO-Hardhat')
+    relevantClasses.add('NO-Mask')
+    relevantClasses.add('NO-Safety Vest')
+  }
+  if (selectedModels.value['fire']) {
+    relevantClasses.add('Fire')
+    relevantClasses.add('Smoke')
+  }
+  return detections.value.filter((d: any) => relevantClasses.has(d.class_name))
 })
 
 watch(violations, (newViolations) => {
@@ -195,7 +195,7 @@ watch(violations, (newViolations) => {
   for (const v of newViolations) {
     const existing = violationLog.value.find(item => item.type === v.type)
     if (existing) {
-      existing.count += v.count || 1
+      existing.count = v.count || 1
     } else {
       violationLog.value.push({
         type: v.type,
@@ -203,10 +203,10 @@ watch(violations, (newViolations) => {
         color: VIOLATION_COLORS[v.type] || '#F44336',
         count: v.count || 1,
       })
+      if (!drawerVisible.value) {
+        drawerVisible.value = true
+      }
     }
-  }
-  if (!drawerVisible.value) {
-    drawerVisible.value = true
   }
 })
 
@@ -214,8 +214,6 @@ const VIOLATION_LABELS: Record<string, string> = {
   warning_no_hardhat: '未戴安全帽',
   warning_no_mask: '未佩戴口罩',
   warning_no_safety_vest: '未穿反光背心',
-  warning_close_to_machinery: '靠近作业机械',
-  warning_close_to_vehicle: '靠近施工车辆',
   warning_people_in_controlled_area: '进入锥形桶管控区',
   warning_people_in_utility_pole_controlled_area: '进入电线杆管控区',
   warning_fire: '检测到火焰',
@@ -228,8 +226,6 @@ const VIOLATION_PRIORITY: Record<string, number> = {
   warning_no_hardhat: 5,
   warning_people_in_controlled_area: 4,
   warning_people_in_utility_pole_controlled_area: 4,
-  warning_close_to_machinery: 3,
-  warning_close_to_vehicle: 3,
   warning_no_safety_vest: 1,
   warning_no_mask: 1,
 }
@@ -238,8 +234,6 @@ const VIOLATION_COLORS: Record<string, string> = {
   warning_no_hardhat: '#F44336',
   warning_no_mask: '#FF9800',
   warning_no_safety_vest: '#FF9800',
-  warning_close_to_machinery: '#FF5722',
-  warning_close_to_vehicle: '#FFC107',
   warning_people_in_controlled_area: '#E91E63',
   warning_people_in_utility_pole_controlled_area: '#9C27B0',
   warning_fire: '#FF5722',
@@ -322,6 +316,7 @@ function connectWebSocket() {
       models: selectedModelKeys.value,
       thresholds,
       danger_rules: dangerRules.value,
+      every_frame: everyFrame.value,
       detection_interval: detectionInterval.value,
       save_screenshots: saveScreenshots.value,
     }))
@@ -411,7 +406,6 @@ onUnmounted(() => {
         <div style="display: flex; justify-content: space-between; align-items: center">
           <span style="font-weight: 600">检测配置</span>
           <div style="display: flex; gap: 8px">
-            <el-button size="small" @click="saveAsProfile">+ 保存</el-button>
             <el-button size="small" @click="$router.push('/profiles')">管理</el-button>
           </div>
         </div>
@@ -438,52 +432,62 @@ onUnmounted(() => {
       <!-- Summary line -->
       <div class="config-summary">
         <span class="config-tag" :class="{ on: selectedModels.ppe }">PPE</span>
-        <span v-if="selectedModels.ppe" class="config-sub">({{ dangerRules.detect_no_hardhat ? '安全帽' : '' }}{{ dangerRules.detect_no_mask ? '口罩' : '' }}{{ dangerRules.detect_no_safety_vest ? '背心' : '' }}{{ dangerRules.detect_near_machinery_or_vehicle ? '机械' : '' }}{{ dangerRules.detect_in_restricted_area ? '锥形桶' : '' }})</span>
+        <span v-if="selectedModels.ppe" class="config-sub">({{ dangerRules.detect_no_hardhat ? '安全帽' : '' }}{{ dangerRules.detect_no_mask ? '口罩' : '' }}{{ dangerRules.detect_no_safety_vest ? '背心' : '' }}{{ dangerRules.detect_in_restricted_area ? '锥形桶' : '' }})</span>
         <span class="config-tag" :class="{ on: selectedModels.fire }">Fire</span>
-        <span class="config-tag">{{ detectionInterval }}s</span>
+        <span v-if="selectedModels.fire" class="config-sub">(火焰/烟雾)</span>
+        <span class="config-tag">{{ everyFrame ? '逐帧' : detectionInterval + 's' }}</span>
         <el-button link size="small" @click="configExpanded = !configExpanded" style="margin-left: auto">
           {{ configExpanded ? '收起' : '展开' }}详细配置
         </el-button>
       </div>
 
-      <!-- Expanded details -->
+      <!-- Expanded details (read-only) -->
       <el-collapse-transition>
         <div v-show="configExpanded" class="config-detail">
           <div v-for="(info, key) in availableModels" :key="key" class="model-config-row">
-            <el-checkbox v-model="selectedModels[key]" :label="info.name" size="large" />
-            <div v-if="selectedModels[key]" class="threshold-slider">
-              <span class="threshold-label">置信度: {{ (modelThresholds[key] * 100).toFixed(0) }}%</span>
-              <el-slider
-                v-model="modelThresholds[key]"
-                :min="0.05"
-                :max="0.95"
-                :step="0.05"
-                size="small"
-                style="width: 160px"
-              />
+            <div class="model-name-row">
+              <span class="model-name">{{ info.name }}</span>
+              <el-tag v-if="selectedModels[key]" size="small" type="success" effect="plain">已启用</el-tag>
+              <el-tag v-else size="small" type="info" effect="plain">未启用</el-tag>
             </div>
-            <div v-if="selectedModels[key] && info.danger_rules" class="danger-rules-inline">
-              <el-checkbox v-model="dangerRules.detect_no_hardhat" size="small">未戴安全帽</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_no_mask" size="small">未戴口罩</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_no_safety_vest" size="small">未穿背心</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_near_machinery_or_vehicle" size="small">靠近机械/车辆</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_in_restricted_area" size="small">锥形桶管控区</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_in_utility_pole_restricted_area" size="small">电线杆管控区</el-checkbox>
-              <el-checkbox v-model="dangerRules.detect_machinery_close_to_pole" size="small">杆旁机械</el-checkbox>
+            <div v-if="selectedModels[key]" class="threshold-display">
+              <span class="threshold-label">置信度: {{ (modelThresholds[key] * 100).toFixed(0) }}%</span>
+            </div>
+            <div v-if="selectedModels[key] && info.danger_rules" class="danger-rules-display">
+              <span class="danger-rule-hint">危险规则:</span>
+              <el-tag v-if="dangerRules.detect_no_hardhat" size="small" type="danger" effect="plain">未戴安全帽</el-tag>
+              <el-tag v-if="dangerRules.detect_no_mask" size="small" type="warning" effect="plain">未戴口罩</el-tag>
+              <el-tag v-if="dangerRules.detect_no_safety_vest" size="small" type="warning" effect="plain">未穿背心</el-tag>
+              <el-tag v-if="dangerRules.detect_in_restricted_area" size="small" type="warning" effect="plain">锥形桶管控区</el-tag>
+              <el-tag v-if="dangerRules.detect_in_utility_pole_restricted_area" size="small" type="warning" effect="plain">电线杆管控区</el-tag>
+              <el-tag v-if="dangerRules.detect_machinery_close_to_pole" size="small" type="warning" effect="plain">杆旁机械</el-tag>
+            </div>
+            <div v-else-if="selectedModels[key] && key === 'fire'" class="danger-rules-display">
+              <span class="danger-rule-hint">检测类型:</span>
+              <el-tag size="small" type="danger" effect="plain">火焰</el-tag>
+              <el-tag size="small" type="warning" effect="plain">烟雾</el-tag>
             </div>
           </div>
 
-          <!-- Video-specific settings -->
+          <!-- Video-specific settings (read-only) -->
           <div class="video-params-row" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0">
             <div class="param-item">
+              <span class="param-label">逐帧检测:</span>
+              <el-switch v-model="everyFrame" size="small" />
+            </div>
+            <div class="param-item">
               <span class="param-label">检测间隔:</span>
-              <el-slider v-model="detectionInterval" :min="0.5" :max="10" :step="0.5" size="small" style="width: 200px" />
-              <span class="threshold-label">{{ detectionInterval }} 秒</span>
+              <span class="threshold-label" :style="{ color: everyFrame ? '#bbb' : 'inherit' }">{{ everyFrame ? '—' : detectionInterval + ' 秒' }}</span>
             </div>
             <div class="param-item">
               <span class="param-label">保存违规截图:</span>
-              <el-switch v-model="saveScreenshots" />
+              <el-tag :type="saveScreenshots ? 'success' : 'info'" size="small">{{ saveScreenshots ? '开启' : '关闭' }}</el-tag>
             </div>
+          </div>
+
+          <div class="config-edit-hint">
+            如需修改配置，请
+            <el-button link type="primary" @click="$router.push('/profiles')">前往检测配置管理</el-button>
           </div>
         </div>
       </el-collapse-transition>
@@ -526,7 +530,7 @@ onUnmounted(() => {
               :disabled="uploading || isDetecting"
               accept="video/*"
             >
-              <div style="padding: 40px 0">
+              <div style="padding: 200px 0">
                 <el-icon :size="60" color="#409eff"><UploadFilled /></el-icon>
                 <p style="margin: 16px 0 8px; font-size: 16px">拖拽视频到此处或点击上传</p>
                 <p style="color: #999; font-size: 12px">支持: MP4, AVI, MOV, MKV, FLV | 最大: 200MB</p>
@@ -573,6 +577,13 @@ onUnmounted(() => {
                   @click="stopDetect"
                 >
                   ⏹ 停止
+                </el-button>
+                <el-button
+                  v-if="filePath && !isDetecting"
+                  size="default"
+                  @click="resetState"
+                >
+                  重新上传
                 </el-button>
                 <el-tag v-if="wsConnected" type="success" effect="dark" size="small">● 已连接</el-tag>
                 <el-tag v-else-if="!isDetecting && filePath" type="info" size="small">● 未开始</el-tag>
@@ -688,12 +699,6 @@ onUnmounted(() => {
       </div>
     </el-drawer>
 
-    <DetectionProfileDialog
-      v-model="dialogVisible"
-      :profile="null"
-      profile-type="video"
-      @save="handleSaveProfile"
-    />
   </div>
 </template>
 
@@ -714,6 +719,10 @@ onUnmounted(() => {
   align-items: center;
   gap: 20px;
   flex-wrap: wrap;
+  margin-bottom: 30px;
+}
+.model-config-row:last-child {
+  margin-bottom: 0;
 }
 .threshold-slider {
   display: flex;
@@ -770,19 +779,29 @@ onUnmounted(() => {
   border-top: 1px solid #f0f0f0;
   margin-top: 8px;
 }
+.config-edit-hint {
+  font-size: 13px;
+  color: #999;
+}
+.danger-rules-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .video-params-row {
   display: flex;
   align-items: center;
-  gap: 32px;
+  gap: 40px;
   flex-wrap: wrap;
 }
 .param-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
 }
 .param-label {
-  font-size: 13px;
+  font-size: 15px;
   color: #666;
   white-space: nowrap;
 }
@@ -797,6 +816,8 @@ onUnmounted(() => {
   position: relative;
   border-radius: 6px;
   overflow: hidden;
+  min-height: 500px;
+  background: #000;
 }
 
 .image-wrapper.violation-active {
@@ -862,10 +883,6 @@ onUnmounted(() => {
   background: rgba(255, 0, 0, 0.12);
   animation: overlay-breathe 1.5s ease-in-out infinite;
   z-index: 5;
-}
-.image-wrapper {
-  position: relative;
-  overflow: hidden;
 }
 .drawer-summary {
   font-size: 13px;
@@ -996,7 +1013,7 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 80px 0;
+  padding: 200px 0;
   color: #999;
 }
 .loading-spinner {

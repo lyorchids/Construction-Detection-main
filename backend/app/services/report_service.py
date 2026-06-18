@@ -4,13 +4,14 @@ import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from sqlalchemy.orm import Session
 
-from app.config import REPORT_DIR
+from app.config import REPORT_DIR, VIOLATION_DIR
 from app.models.detection import DetectionRecord, Violation
 from app.services import detection_service
 
@@ -20,9 +21,10 @@ VIOLATION_LABELS: dict[str, str] = {
     'warning_no_hardhat': '未戴安全帽',
     'warning_no_mask': '未戴口罩',
     'warning_no_safety_vest': '未穿反光背心',
-    'warning_close_to_machinery': '人员靠近机械',
-    'warning_close_to_vehicle': '人员靠近车辆',
     'warning_people_in_controlled_area': '人员进入管控区',
+    'warning_people_in_utility_pole_controlled_area': '进入电线杆危险区',
+    'warning_fire': '检测到火焰',
+    'warning_smoke': '检测到烟雾',
 }
 
 
@@ -169,9 +171,138 @@ def _add_violation_screenshots(
         run = p.add_run(f"{label} - 帧 {v.frame_number} ({v.timestamp:.1f}s)")
         run.bold = True
 
-        screenshot_full_path = Path(v.screenshot_path.lstrip('/'))
+        filename = v.screenshot_path.lstrip('/violations/')
+        if not filename:
+            continue
+        screenshot_full_path = VIOLATION_DIR / filename
         if screenshot_full_path.exists():
             try:
                 doc.add_picture(str(screenshot_full_path), width=Inches(4))
             except Exception:
                 doc.add_paragraph(f"[图片加载失败: {screenshot_full_path}]")
+
+
+def generate_ai_report_docx(
+    record: DetectionRecord,
+    violations: list[Violation],
+    ai_report: dict[str, Any],
+) -> str:
+    """Generate a DOCX report with AI analysis content and violation screenshots.
+
+    Args:
+        record: The detection record.
+        violations: List of violations with screenshot paths.
+        ai_report: AI-generated report data.
+
+    Returns:
+        Path to the generated report file.
+    """
+    doc = Document()
+
+    title = doc.add_heading('建筑施工现场安全隐患AI分析报告', level=0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph()
+
+    doc.add_heading('一、基本信息', level=1)
+    bi = ai_report.get('basic_info', {})
+    basic_table = doc.add_table(rows=6, cols=2, style='Light Shading Accent 1')
+    basic_data = [
+        ('报告编号', str(bi.get('report_id', ''))),
+        ('生成时间', str(bi.get('report_time', ''))),
+        ('文件名', str(bi.get('file_name', ''))),
+        ('检测类型', '图片' if str(bi.get('detection_type', '')) == 'image' else '视频'),
+        ('检测时长', f"{float(bi.get('detection_duration', 0)):.1f} 秒"),
+        ('检测目标', f"{int(bi.get('total_targets', 0))} 个"),
+    ]
+    for i, (label, value) in enumerate(basic_data):
+        basic_table.cell(i, 0).text = label
+        basic_table.cell(i, 1).text = value
+        for p in basic_table.cell(i, 0).paragraphs:
+            p.runs[0].bold = True
+
+    doc.add_heading('二、检测概况', level=1)
+    sm = ai_report.get('summary', {})
+    summary_table = doc.add_table(rows=2, cols=2, style='Light Shading Accent 1')
+    summary_data = [
+        ('违规总数', f"{int(sm.get('total_violations', 0))}"),
+        ('风险等级', str(sm.get('risk_level', 'low'))),
+    ]
+    for i, (label, value) in enumerate(summary_data):
+        summary_table.cell(i, 0).text = label
+        summary_table.cell(i, 1).text = value
+        for p in summary_table.cell(i, 0).paragraphs:
+            p.runs[0].bold = True
+
+    doc.add_heading('三、违规详情', level=1)
+    vds = ai_report.get('violation_details', [])
+    if vds:
+        detail_table = doc.add_table(rows=1, cols=5, style='Light Shading Accent 1')
+        hdr = detail_table.rows[0].cells
+        hdr[0].text = '违规类型'
+        hdr[1].text = '次数'
+        hdr[2].text = '严重程度'
+        hdr[3].text = '违规描述'
+        hdr[4].text = '整改建议'
+        for cell in hdr:
+            for p in cell.paragraphs:
+                for r in p.runs:
+                    r.bold = True
+        for v in vds:
+            row = detail_table.add_row()
+            row.cells[0].text = str(v.get('type', ''))
+            row.cells[1].text = str(v.get('count', 0))
+            row.cells[2].text = str(v.get('severity', ''))
+            row.cells[3].text = str(v.get('description', ''))
+            row.cells[4].text = str(v.get('suggestion', ''))
+    else:
+        doc.add_paragraph('暂无违规详情。')
+
+    doc.add_heading('四、安全评估', level=1)
+    sa = ai_report.get('safety_assessment', {})
+    doc.add_paragraph(f"综合评价：{sa.get('overall_evaluation', '')}")
+    doc.add_paragraph()
+    p = doc.add_paragraph('风险因素：')
+    p.runs[0].bold = True
+    risk_factors = sa.get('risk_factors', [])
+    if risk_factors:
+        for rf in risk_factors:
+            doc.add_paragraph(rf, style='List Bullet')
+    else:
+        doc.add_paragraph('无')
+    doc.add_paragraph()
+    doc.add_paragraph(f"主要发现：{sa.get('key_findings', '')}")
+
+    doc.add_heading('五、违规截图', level=1)
+    screenshots = [v for v in violations if v.screenshot_path]
+    if not screenshots:
+        doc.add_paragraph('暂无违规截图。')
+    else:
+        doc.add_paragraph(f"共 {len(screenshots)} 张违规截图：")
+        for v in screenshots[:20]:
+            label = VIOLATION_LABELS.get(v.violation_type, v.violation_type)
+            doc.add_paragraph()
+            p = doc.add_paragraph()
+            run = p.add_run(f"{label} - 帧 {v.frame_number} ({v.timestamp:.1f}s)")
+            run.bold = True
+            filename = v.screenshot_path.lstrip('/violations/')
+            if filename:
+                screenshot_full_path = VIOLATION_DIR / filename
+                if screenshot_full_path.exists():
+                    try:
+                        doc.add_picture(str(screenshot_full_path), width=Inches(4))
+                    except Exception:
+                        doc.add_paragraph(f"[图片加载失败: {screenshot_full_path}]")
+
+    doc.add_heading('六、总体建议', level=1)
+    doc.add_paragraph(ai_report.get('overall_suggestion', ''))
+    doc.add_paragraph()
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    run = p.add_run(ai_report.get('expert_signature', 'AI安全专家'))
+    run.bold = True
+
+    filename = f"ai_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+    file_path = REPORT_DIR / filename
+    doc.save(str(file_path))
+    logger.info(f"AI report saved: {file_path}")
+    return str(file_path)

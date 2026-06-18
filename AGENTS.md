@@ -134,8 +134,6 @@ ruff format .                   # format
 |--------|-------|
 | warning_no_hardhat | 未戴安全帽 |
 | warning_no_safety_vest | 未穿反光背心 |
-| warning_close_to_machinery | 靠近机械 |
-| warning_close_to_vehicle | 靠近车辆 |
 | warning_people_in_controlled_area | 进入锥形桶管控区 |
 | warning_people_in_utility_pole_controlled_area | 进入电线杆管控区 |
 
