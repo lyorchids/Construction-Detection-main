@@ -19,13 +19,7 @@ class RecordResponse(BaseModel):
     total_objects: int
     violation_count: int
     duration: float
-    v_no_hardhat: int = 0
-    v_no_mask: int = 0
-    v_no_safety_vest: int = 0
-    v_in_controlled_area: int = 0
-    v_in_pole_area: int = 0
-    v_fire: int = 0
-    v_smoke: int = 0
+    violations: dict[str, int] = {}
 
 
 class ViolationResponse(BaseModel):

@@ -25,7 +25,7 @@ const VIOLATION_LABELS: Record<string, string> = {
   warning_no_mask: '未佩戴口罩',
   warning_no_safety_vest: '未穿反光背心',
   warning_people_in_controlled_area: '进入管控区',
-  warning_people_in_utility_pole_controlled_area: '进入电线杆危险区',
+  detect_machinery_close_to_pole: '机械靠近电线杆',
   warning_fire: '检测到火焰',
   warning_smoke: '检测到烟雾',
 }
@@ -48,7 +48,7 @@ function violationLevel(vtype: string): string {
     warning_no_mask: 'low',
     warning_no_safety_vest: 'low',
     warning_people_in_controlled_area: 'high',
-    warning_people_in_utility_pole_controlled_area: 'high',
+    detect_machinery_close_to_pole: 'high',
     warning_fire: 'high',
     warning_smoke: 'high',
   }
@@ -189,13 +189,14 @@ function formatTime(iso: string): string {
           <span v-else>0</span>
         </el-descriptions-item>
         <el-descriptions-item label="时长">{{ record.duration.toFixed(1) }}s</el-descriptions-item>
-        <el-descriptions-item label="未戴安全帽">{{ record.v_no_hardhat || 0 }}</el-descriptions-item>
-        <el-descriptions-item label="未戴口罩">{{ record.v_no_mask || 0 }}</el-descriptions-item>
-        <el-descriptions-item label="未穿反光背心（警告）">{{ record.v_no_safety_vest || 0 }}</el-descriptions-item>
-        <el-descriptions-item label="进入管控区">{{ record.v_in_controlled_area || 0 }}</el-descriptions-item>
-        <el-descriptions-item label="进入电线杆区域">{{ record.v_in_pole_area || 0 }}</el-descriptions-item>
-        <el-descriptions-item label="火焰">{{ record.v_fire || 0 }}</el-descriptions-item>
-        <el-descriptions-item label="烟雾">{{ record.v_smoke || 0 }}</el-descriptions-item>
+        <template v-if="Object.keys(record.violations).length > 0">
+          <el-descriptions-item
+            v-for="(count, vtype) in record.violations"
+            :key="vtype"
+            :label="VIOLATION_LABELS[vtype] || vtype"
+          >{{ count }}</el-descriptions-item>
+        </template>
+        <el-descriptions-item v-else label="违规详情">无违规</el-descriptions-item>
       </el-descriptions>
     </el-card>
 

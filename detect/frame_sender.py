@@ -89,7 +89,7 @@ class BackendFrameSender:
         use_websocket: bool = True,
         warnings_json: str = '',
         cone_polygons_json: str = '',
-        pole_polygons_json: str = '',
+        _unused_pole_polygons_json: str = '',
         detection_items_json: str = '',
     ) -> dict:
         """
@@ -104,7 +104,7 @@ class BackendFrameSender:
             use_websocket (bool): Whether to use WebSocket instead of HTTP
             warnings_json (str): JSON string of warnings
             cone_polygons_json (str): JSON string of cone polygons
-            pole_polygons_json (str): JSON string of pole polygons
+            _unused_pole_polygons_json (str): JSON string of pole polygons
             detection_items_json (str): JSON string of detection items
 
         Returns:
@@ -129,7 +129,7 @@ class BackendFrameSender:
                     frame_bytes=encoded_frame,
                     warnings_json=warnings_json,
                     cone_polygons_json=cone_polygons_json,
-                    pole_polygons_json=pole_polygons_json,
+                    _unused_pole_polygons_json=_unused_pole_polygons_json,
                     detection_items_json=detection_items_json,
                     width=width,
                     height=height,
@@ -148,7 +148,7 @@ class BackendFrameSender:
                     frame_bytes=encoded_frame,
                     warnings_json=warnings_json,
                     cone_polygons_json=cone_polygons_json,
-                    pole_polygons_json=pole_polygons_json,
+                    _unused_pole_polygons_json=_unused_pole_polygons_json,
                     detection_items_json=detection_items_json,
                     width=width,
                     height=height,
@@ -160,7 +160,7 @@ class BackendFrameSender:
                     frame_bytes=encoded_frame,
                     warnings_json=warnings_json,
                     cone_polygons_json=cone_polygons_json,
-                    pole_polygons_json=pole_polygons_json,
+                    _unused_pole_polygons_json=_unused_pole_polygons_json,
                     detection_items_json=detection_items_json,
                     width=width,
                     height=height,
@@ -177,7 +177,7 @@ class BackendFrameSender:
         frame_bytes: bytes,
         warnings_json: str = '',
         cone_polygons_json: str = '',
-        pole_polygons_json: str = '',
+        _unused_pole_polygons_json: str = '',
         detection_items_json: str = '',
         width: int = 0,
         height: int = 0,
@@ -193,7 +193,7 @@ class BackendFrameSender:
                 JSON string of warnings. Defaults to ''.
             cone_polygons_json (str, optional):
                 JSON string of cone polygons. Defaults to ''.
-            pole_polygons_json (str, optional):
+            _unused_pole_polygons_json (str, optional):
                 JSON string of pole polygons. Defaults to ''.
             detection_items_json (str, optional):
                 JSON string of detection items. Defaults to ''.
@@ -220,7 +220,7 @@ class BackendFrameSender:
             'key': stream_name,
             'warnings_json': warnings_json,
             'cone_polygons_json': cone_polygons_json,
-            'pole_polygons_json': pole_polygons_json,
+            '_unused_pole_polygons_json': _unused_pole_polygons_json,
             'detection_items_json': detection_items_json,
             'width': width,
             'height': height,
@@ -240,7 +240,7 @@ class BackendFrameSender:
         frame_bytes: bytes,
         warnings_json: str = '',
         cone_polygons_json: str = '',
-        pole_polygons_json: str = '',
+        _unused_pole_polygons_json: str = '',
         detection_items_json: str = '',
         width: int = 0,
         height: int = 0,
@@ -258,7 +258,7 @@ class BackendFrameSender:
                 JSON string of warnings. Defaults to ''.
             cone_polygons_json (str, optional):
             JSON string of cone polygons. Defaults to ''.
-            pole_polygons_json (str, optional):
+            _unused_pole_polygons_json (str, optional):
                 JSON string of pole polygons. Defaults to ''.
             detection_items_json (str, optional):
                 JSON string of detection items. Defaults to ''.
@@ -273,7 +273,7 @@ class BackendFrameSender:
             'key': stream_name,
             'warnings_json': warnings_json,
             'cone_polygons_json': cone_polygons_json,
-            'pole_polygons_json': pole_polygons_json,
+            '_unused_pole_polygons_json': _unused_pole_polygons_json,
             'detection_items_json': detection_items_json,
             'width': width,
             'height': height,

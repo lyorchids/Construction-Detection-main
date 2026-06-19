@@ -6,9 +6,11 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import selectinload
 
 from app.config import VIOLATION_DIR
 from app.models.detection import DetectionRecord, Violation
+from app.models.violation_count import ViolationCount
 
 logger = logging.getLogger(__name__)
 
@@ -40,30 +42,13 @@ def get_stats(db: Session) -> dict:
             violation_by_type.get(v.violation_type, 0) + 1
         )
 
-    # 新增：按 DetectionRecord 新字段统计各违规类型数量
-    v_stats: dict[str, int] = {
-        'no_hardhat': db.scalar(
-            select(func.sum(DetectionRecord.v_no_hardhat))
-        ) or 0,
-        'no_mask': db.scalar(
-            select(func.sum(DetectionRecord.v_no_mask))
-        ) or 0,
-        'no_safety_vest': db.scalar(
-            select(func.sum(DetectionRecord.v_no_safety_vest))
-        ) or 0,
-        'in_controlled_area': db.scalar(
-            select(func.sum(DetectionRecord.v_in_controlled_area))
-        ) or 0,
-        'in_pole_area': db.scalar(
-            select(func.sum(DetectionRecord.v_in_pole_area))
-        ) or 0,
-        'fire': db.scalar(
-            select(func.sum(DetectionRecord.v_fire))
-        ) or 0,
-        'smoke': db.scalar(
-            select(func.sum(DetectionRecord.v_smoke))
-        ) or 0,
-    }
+    violation_by_type_detail: dict[str, int] = {}
+    vc_rows = db.execute(
+        select(ViolationCount.violation_type, func.sum(ViolationCount.count))
+        .group_by(ViolationCount.violation_type)
+    ).all()
+    for row in vc_rows:
+        violation_by_type_detail[row[0]] = int(row[1])
 
     last_7_days = []
     for i in range(6, -1, -1):
@@ -86,7 +71,7 @@ def get_stats(db: Session) -> dict:
         'today_records': today_records,
         'today_violations': today_violations,
         'violation_by_type': violation_by_type,
-        'violation_by_type_detail': v_stats,
+        'violation_by_type_detail': violation_by_type_detail,
         'last_7_days': last_7_days,
     }
 
@@ -99,33 +84,49 @@ def create_record(
     total_objects: int = 0,
     violation_count: int = 0,
     duration: float = 0.0,
-    v_no_hardhat: int = 0,
-    v_no_mask: int = 0,
-    v_no_safety_vest: int = 0,
-    v_in_controlled_area: int = 0,
-    v_in_pole_area: int = 0,
-    v_fire: int = 0,
-    v_smoke: int = 0,
+    violation_counts: dict[str, int] | None = None,
 ) -> DetectionRecord:
     record = DetectionRecord(
         filename=filename,
         file_type=file_type,
         file_path=file_path,
+        detect_time=datetime.now(),
         total_objects=total_objects,
         violation_count=violation_count,
         duration=duration,
-        v_no_hardhat=v_no_hardhat,
-        v_no_mask=v_no_mask,
-        v_no_safety_vest=v_no_safety_vest,
-        v_in_controlled_area=v_in_controlled_area,
-        v_in_pole_area=v_in_pole_area,
-        v_fire=v_fire,
-        v_smoke=v_smoke,
     )
     db.add(record)
     db.commit()
     db.refresh(record)
+
+    if violation_counts:
+        for vtype, count in violation_counts.items():
+            if count > 0:
+                db.add(ViolationCount(
+                    record_id=record.id,
+                    violation_type=vtype,
+                    count=count,
+                ))
+        db.commit()
+
     return record
+
+
+def set_violation_counts(db: Session, record_id: int, counts: dict[str, int]) -> None:
+    """Replace all ViolationCount rows for a record with new counts."""
+    existing = db.scalars(
+        select(ViolationCount).where(ViolationCount.record_id == record_id)
+    ).all()
+    for vc in existing:
+        db.delete(vc)
+    for vtype, count in counts.items():
+        if count > 0:
+            db.add(ViolationCount(
+                record_id=record_id,
+                violation_type=vtype,
+                count=count,
+            ))
+    db.commit()
 
 
 def create_violation(
@@ -146,6 +147,7 @@ def create_violation(
         frame_number=frame_number,
         timestamp=timestamp,
         screenshot_path=screenshot_path,
+        created_at=datetime.now(),
     )
     db.add(violation)
     db.commit()
@@ -161,7 +163,7 @@ def get_records(
     start_date: datetime | None = None,
     end_date: datetime | None = None,
 ) -> tuple[list[DetectionRecord], int]:
-    query = select(DetectionRecord)
+    query = select(DetectionRecord).options(selectinload(DetectionRecord.violation_counts))
 
     if file_type:
         query = query.where(DetectionRecord.file_type == file_type)

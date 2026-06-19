@@ -53,13 +53,7 @@ def get_records(
             total_objects=r.total_objects,
             violation_count=r.violation_count,
             duration=r.duration,
-            v_no_hardhat=r.v_no_hardhat,
-            v_no_mask=r.v_no_mask,
-            v_no_safety_vest=r.v_no_safety_vest,
-            v_in_controlled_area=r.v_in_controlled_area,
-            v_in_pole_area=r.v_in_pole_area,
-            v_fire=r.v_fire,
-            v_smoke=r.v_smoke,
+            violations={vc.violation_type: vc.count for vc in r.violation_counts},
         )
         for r in records
     ]
@@ -87,13 +81,7 @@ def get_record(record_id: int, db: Session = Depends(get_db)):
         total_objects=record.total_objects,
         violation_count=record.violation_count,
         duration=record.duration,
-        v_no_hardhat=record.v_no_hardhat,
-        v_no_mask=record.v_no_mask,
-        v_no_safety_vest=record.v_no_safety_vest,
-        v_in_controlled_area=record.v_in_controlled_area,
-        v_in_pole_area=record.v_in_pole_area,
-        v_fire=record.v_fire,
-        v_smoke=record.v_smoke,
+        violations={vc.violation_type: vc.count for vc in record.violation_counts},
     )
 
 

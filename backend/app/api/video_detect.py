@@ -80,7 +80,6 @@ async def websocket_detect(websocket: WebSocket, file_path: str):
                         'detect_no_safety_vest': danger_rules_raw.get('detect_no_safety_vest', True),
                         'detect_near_machinery_or_vehicle': danger_rules_raw.get('detect_near_machinery_or_vehicle', True),
                         'detect_in_restricted_area': danger_rules_raw.get('detect_in_restricted_area', True),
-                        'detect_in_utility_pole_restricted_area': danger_rules_raw.get('detect_in_utility_pole_restricted_area', False),
                         'detect_machinery_close_to_pole': danger_rules_raw.get('detect_machinery_close_to_pole', False),
                     }
 

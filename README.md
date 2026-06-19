@@ -290,7 +290,6 @@ npm run dev
 | `warning_no_mask` | 未戴口罩 | 检测到 NO-Mask 目标 |
 | `warning_no_safety_vest` | 未穿反光背心 | Person 与 NO-Safety Vest 高度重叠 |
 | `warning_people_in_controlled_area` | 进入锥形桶管控区 | Person 进入 Safety Cone 围成的多边形区域 |
-| `warning_people_in_utility_pole_controlled_area` | 进入电线杆管控区 | Person 进入 Utility Pole 的圆形缓冲区 |
 | `warning_fire` | 检测到火焰 | 火灾模型检测到 fire 目标 |
 | `warning_smoke` | 检测到烟雾 | 火灾模型检测到 smoke 目标 |
 

@@ -13,7 +13,7 @@ from app.schemas.case import CaseCreate, CaseUpdate
 CASE_TYPE_MAP: dict[str, str] = {
     'warning_no_hardhat': 'no_hardhat',
     'warning_people_in_controlled_area': 'dangerous_operation',
-    'warning_people_in_utility_pole_controlled_area': 'dangerous_operation',
+    'detect_machinery_close_to_pole': 'dangerous_operation',
 }
 
 CASE_TYPE_LABELS: dict[str, str] = {
@@ -25,7 +25,7 @@ CASE_TYPE_LABELS: dict[str, str] = {
 SEVERITY_MAP: dict[str, str] = {
     'warning_no_hardhat': 'high',
     'warning_people_in_controlled_area': 'high',
-    'warning_people_in_utility_pole_controlled_area': 'high',
+    'detect_machinery_close_to_pole': 'high',
     'warning_no_safety_vest': 'low',
 }
 
@@ -78,7 +78,7 @@ def _build_description(record: DetectionRecord, violations: list[Violation]) -> 
     labels = {
         'warning_no_hardhat': '未佩戴安全帽',
         'warning_people_in_controlled_area': '进入锥形桶管控区',
-        'warning_people_in_utility_pole_controlled_area': '进入电线杆危险区域',
+        'detect_machinery_close_to_pole': '机械靠近电线杆',
         'warning_no_safety_vest': '未穿反光背心',
     }
     for vtype, count in type_counts.items():

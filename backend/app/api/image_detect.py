@@ -75,7 +75,6 @@ class ImageDetectResponse(BaseModel):
     detections: list[DetectionItem]
     violations: list[ViolationItem]
     cone_polygons: list[list[list[float]]] = []
-    pole_polygons: list[list[list[float]]] = []
     total_objects: int
     record_id: int
 
@@ -144,7 +143,6 @@ def detect_image(req: ImageDetectRequest, db: Session = Depends(get_db)):
     all_detections: list[DetectionItem] = []
     all_violations: list[dict[str, Any]] = []
     all_cone_polygons: list[list[list[float]]] = []
-    all_pole_polygons: list[list[list[float]]] = []
     all_warnings_raw: dict[str, dict[str, Any]] = {}
 
     models_to_run = req.models or ['ppe']
@@ -171,9 +169,8 @@ def detect_image(req: ImageDetectRequest, db: Session = Depends(get_db)):
 
         if cfg.get('danger_rules', False):
             datas = [[*r.bbox, r.confidence, r.class_id] for r in results]
-            warnings, warnings_only, cpolys, ppolys = danger.detect_danger(datas)
+            warnings, warnings_only, cpolys = danger.detect_danger(datas)
             all_cone_polygons.extend(cpolys)
-            all_pole_polygons.extend(ppolys)
             for k, v in warnings.items():
                 if isinstance(v, dict):
                     all_violations.append({
@@ -253,20 +250,14 @@ def detect_image(req: ImageDetectRequest, db: Session = Depends(get_db)):
         file_path=req.file_path,
         total_objects=len(all_detections),
         violation_count=violation_count,
-        v_no_hardhat=vtype_counts.get('warning_no_hardhat', 0),
-        v_no_mask=vtype_counts.get('warning_no_mask', 0),
-        v_no_safety_vest=vtype_counts.get('warning_no_safety_vest', 0),
-        v_in_controlled_area=vtype_counts.get('warning_people_in_controlled_area', 0),
-        v_in_pole_area=vtype_counts.get('warning_people_in_utility_pole_controlled_area', 0),
-        v_fire=vtype_counts.get('warning_fire', 0),
-        v_smoke=vtype_counts.get('warning_smoke', 0),
+        violation_counts=vtype_counts,
     )
 
     # Only save violation screenshot for PPE-related violations
     if vtype_counts:
         filename = f"{uuid.uuid4().hex[:12]}_frame0.jpg"
         screenshot_path = VIOLATION_DIR / filename
-        annotated = draw_annotations(frame, [], all_warnings_raw)
+        annotated = draw_annotations(frame, [], all_warnings_raw, all_cone_polygons)
         cv2.imwrite(str(screenshot_path), annotated, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
         for vtype, vdata in vtype_counts.items():
@@ -289,7 +280,6 @@ def detect_image(req: ImageDetectRequest, db: Session = Depends(get_db)):
         detections=all_detections,
         violations=[ViolationItem(**v) for v in merged_violations],
         cone_polygons=all_cone_polygons,
-        pole_polygons=all_pole_polygons,
         total_objects=len(all_detections),
         record_id=record.id,
     )

@@ -9,13 +9,7 @@ export interface RecordItem {
   total_objects: number
   violation_count: number
   duration: number
-  v_no_hardhat?: number
-  v_no_mask?: number
-  v_no_safety_vest?: number
-  v_in_controlled_area?: number
-  v_in_pole_area?: number
-  v_fire?: number
-  v_smoke?: number
+  violations: Record<string, number>
 }
 
 export interface PaginatedRecords {
@@ -37,15 +31,7 @@ export interface Stats {
   today_violations: number
   violation_by_type: Record<string, number>
   last_7_days: StatsDayItem[]
-  violation_by_type_detail?: {
-    no_hardhat: number
-    no_mask: number
-    no_safety_vest: number
-    in_controlled_area: number
-    in_pole_area: number
-    fire: number
-    smoke: number
-  }
+  violation_by_type_detail?: Record<string, number>
 }
 
 export interface AIReportViolation {

@@ -56,13 +56,11 @@ const dangerRules = ref({
   detect_no_mask: true,
   detect_no_safety_vest: true,
   detect_in_restricted_area: true,
-  detect_in_utility_pole_restricted_area: false,
   detect_machinery_close_to_pole: false,
 })
 
 // Polygon overlays
 const conePolygons = ref<number[][][]>([])
-const polePolygons = ref<number[][][]>([])
 
 // Collapsible config
 const configExpanded = ref(false)
@@ -120,7 +118,7 @@ const VIOLATION_LABELS: Record<string, string> = {
   warning_no_mask: '未佩戴口罩',
   warning_no_safety_vest: '未穿反光背心',
   warning_people_in_controlled_area: '进入管控区',
-  warning_people_in_utility_pole_controlled_area: '进入电线杆管控区',
+  detect_machinery_close_to_pole: '机械靠近电线杆',
   warning_fire: '检测到火焰',
   warning_smoke: '检测到烟雾',
 }
@@ -133,7 +131,6 @@ function compatRules(rules: Record<string, any>): Record<string, any> {
       detect_no_mask: val,
       detect_no_safety_vest: val,
       detect_in_restricted_area: rules.detect_in_restricted_area ?? true,
-      detect_in_utility_pole_restricted_area: rules.detect_in_utility_pole_restricted_area ?? false,
       detect_machinery_close_to_pole: rules.detect_machinery_close_to_pole ?? false,
     }
   }
@@ -211,7 +208,6 @@ async function detectImage(filePath: string) {
     detections.value = data.detections
     violations.value = data.violations
     conePolygons.value = data.cone_polygons || []
-    polePolygons.value = data.pole_polygons || []
     totalObjects.value = data.total_objects
 
     if (data.violations.length > 0) {
@@ -299,7 +295,6 @@ function reset() {
               <el-tag v-if="dangerRules.detect_no_mask" size="small" type="warning" effect="plain">未戴口罩</el-tag>
               <el-tag v-if="dangerRules.detect_no_safety_vest" size="small" type="warning" effect="plain">未穿背心</el-tag>
               <el-tag v-if="dangerRules.detect_in_restricted_area" size="small" type="warning" effect="plain">锥形桶管控区</el-tag>
-              <el-tag v-if="dangerRules.detect_in_utility_pole_restricted_area" size="small" type="warning" effect="plain">电线杆管控区</el-tag>
               <el-tag v-if="dangerRules.detect_machinery_close_to_pole" size="small" type="warning" effect="plain">杆旁机械</el-tag>
             </div>
             <div v-else-if="selectedModels[key] && key === 'fire'" class="danger-rules-display">
@@ -359,7 +354,6 @@ function reset() {
               :detections="filteredDetections"
               :violations="filteredViolations"
               :cone-polygons="conePolygons"
-              :pole-polygons="polePolygons"
               :show-labels="true"
             />
           </div>

@@ -52,7 +52,6 @@ class VideoStreamer:
         self._cached_raw: list[Any] = []
         self._cached_tracked: list[Any] = []
         self._cached_cone_polygons: list[list[list[float]]] = []
-        self._cached_pole_polygons: list[list[list[float]]] = []
         self._cached_warnings: dict[str, Any] = {}
 
     async def stream(
@@ -108,13 +107,6 @@ class VideoStreamer:
             total_objects=0,
             violation_count=0,
             duration=duration,
-            v_no_hardhat=violation_type_counts.get('warning_no_hardhat', 0),
-            v_no_mask=violation_type_counts.get('warning_no_mask', 0),
-            v_no_safety_vest=violation_type_counts.get('warning_no_safety_vest', 0),
-            v_in_controlled_area=violation_type_counts.get('warning_people_in_controlled_area', 0),
-            v_in_pole_area=violation_type_counts.get('warning_people_in_utility_pole_controlled_area', 0),
-            v_fire=violation_type_counts.get('warning_fire', 0),
-            v_smoke=violation_type_counts.get('warning_smoke', 0),
         )
         db.commit()
         record_id = record.id
@@ -142,7 +134,6 @@ class VideoStreamer:
 
                 all_warnings: dict[str, Any] = {}
                 cone_polygons: list[list[list[float]]] = []
-                pole_polygons: list[list[list[float]]] = []
 
                 if should_detect:
                     detection_count += 1
@@ -180,9 +171,8 @@ class VideoStreamer:
                                 for d in raw
                             ]
                             if datas:
-                                warnings, warnings_only, cpolys, ppolys = self.danger_detector.detect_danger(datas)
+                                warnings, warnings_only, cpolys = self.danger_detector.detect_danger(datas)
                                 cone_polygons.extend(cpolys)
-                                pole_polygons.extend(ppolys)
                                 for k, v in warnings.items():
                                     if k not in all_warnings:
                                         all_warnings[k] = v
@@ -212,8 +202,6 @@ class VideoStreamer:
                     self._cached_tracked = all_tracked
                     if cone_polygons:
                         self._cached_cone_polygons = cone_polygons
-                    if pole_polygons:
-                        self._cached_pole_polygons = pole_polygons
 
                     # --- Direct violation counting (no state machine) ---
                     self._cached_warnings = all_warnings
@@ -265,7 +253,7 @@ class VideoStreamer:
                             try:
                                 filename = f"{uuid.uuid4().hex[:12]}.jpg"
                                 screenshot_path = VIOLATION_DIR / filename
-                                annotated = draw_annotations(frame, [], all_warnings)
+                                annotated = draw_annotations(frame, [], all_warnings, self._cached_cone_polygons)
                                 success = cv2.imwrite(
                                     str(screenshot_path), annotated,
                                     [cv2.IMWRITE_JPEG_QUALITY, 85],
@@ -316,7 +304,7 @@ class VideoStreamer:
                     if d.class_id == 5:
                         cx = (d.bbox[0] + d.bbox[2]) / 2.0
                         cy = (d.bbox[1] + d.bbox[3]) / 2.0
-                        for vtype in ('warning_people_in_controlled_area', 'warning_people_in_utility_pole_controlled_area'):
+                        for vtype in ('warning_people_in_controlled_area',):
                             if vtype not in vtype_set:
                                 continue
                             for wbbox in warning_obj_bboxes.get(vtype, []):
@@ -348,7 +336,6 @@ class VideoStreamer:
                     'detections': detections_payload,
                     'violations': violation_bboxes,
                     'cone_polygons': self._cached_cone_polygons,
-                    'pole_polygons': self._cached_pole_polygons,
                 }
 
                 await websocket.send_json(frame_data)
@@ -390,18 +377,20 @@ class VideoStreamer:
                             .values(
                                 total_objects=total_objects,
                                 violation_count=unique_violations,
-                                v_no_hardhat=violation_type_counts.get('warning_no_hardhat', 0),
-                                v_no_mask=violation_type_counts.get('warning_no_mask', 0),
-                                v_no_safety_vest=violation_type_counts.get('warning_no_safety_vest', 0),
-                                v_in_controlled_area=violation_type_counts.get('warning_people_in_controlled_area', 0),
-                                v_in_pole_area=violation_type_counts.get('warning_people_in_utility_pole_controlled_area', 0),
-                                v_fire=violation_type_counts.get('warning_fire', 0),
-                                v_smoke=violation_type_counts.get('warning_smoke', 0),
                             ),
                         )
                         db.commit()
                     except Exception as e2:
                         logger.error(f"Failed to update record counts: {e2}")
+                        db.rollback()
+
+                    # 1b) Save violation counts
+                    try:
+                        detection_service.set_violation_counts(
+                            db, record_id, violation_type_counts,
+                        )
+                    except Exception as e2:
+                        logger.error(f"Failed to save violation counts: {e2}")
                         db.rollback()
 
                     # 2) Save violation records (best-effort, each independently)
@@ -444,7 +433,6 @@ class VideoStreamer:
             self._cached_raw.clear()
             self._cached_tracked.clear()
             self._cached_cone_polygons.clear()
-            self._cached_pole_polygons.clear()
             logger.info(
                 f"Streaming finished: {frame_number} frames, "
                 f"{detection_count} detection frames, "

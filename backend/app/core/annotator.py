@@ -22,7 +22,7 @@ LEVEL_COLORS: dict[str, tuple[int, int, int]] = {
 VIOLATION_LEVELS: dict[str, str] = {
     'warning_no_hardhat': 'high',
     'warning_people_in_controlled_area': 'high',
-    'warning_people_in_utility_pole_controlled_area': 'high',
+    'detect_machinery_close_to_pole': 'high',
     'warning_no_safety_vest': 'low',
     'warning_no_mask': 'low',
 }
@@ -32,7 +32,7 @@ VIOLATION_LABELS_CN: dict[str, str] = {
     'warning_no_mask': '未戴口罩',
     'warning_no_safety_vest': '未穿反光背心',
     'warning_people_in_controlled_area': '进入锥形桶管控区',
-    'warning_people_in_utility_pole_controlled_area': '进入电线杆管控区',
+    'detect_machinery_close_to_pole': '机械靠近电线杆',
     'warning_fire': '火焰',
     'warning_smoke': '烟雾',
 }
@@ -79,6 +79,7 @@ def draw_annotations(
     frame: Any,
     detections: list[Any],
     warnings: dict[str, Any],
+    polygons: list[list[list[float]]] | None = None,
 ) -> Any:
     """Draw detection boxes and violation labels on a copy of the frame.
 
@@ -109,9 +110,16 @@ def draw_annotations(
             x1, y1, x2, y2 = map(int, bbox[:4])
             cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
 
-    # ── 3. Draw ALL text via PIL (supports Chinese) ──
+    # ── 3. Draw zone polygons (semi-transparent on PIL) ──
     pil_img = _cv2_to_pil(img)
-    draw = ImageDraw.Draw(pil_img)
+    draw = ImageDraw.Draw(pil_img, 'RGBA')
+
+    if polygons:
+        for poly in polygons:
+            if len(poly) < 3:
+                continue
+            flat = [(pt[0], pt[1]) for pt in poly]
+            draw.polygon(flat, fill=(255, 235, 59, 64), outline=(255, 235, 59, 180))
 
     for d in detections:
         x1, y1, x2, y2 = map(int, d.bbox[:4])

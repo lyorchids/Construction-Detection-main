@@ -57,7 +57,6 @@ const dangerRules = ref({
   detect_no_mask: true,
   detect_no_safety_vest: true,
   detect_in_restricted_area: true,
-  detect_in_utility_pole_restricted_area: false,
   detect_machinery_close_to_pole: false,
 })
 
@@ -68,7 +67,6 @@ const saveScreenshots = ref(true)
 
 // Polygon overlays
 const conePolygons = ref<number[][][]>([])
-const polePolygons = ref<number[][][]>([])
 
 // Profile state
 const profiles = ref<DetectionProfile[]>([])
@@ -121,7 +119,6 @@ function compatRules(rules: Record<string, any>): Record<string, any> {
       detect_no_mask: val,
       detect_no_safety_vest: val,
       detect_in_restricted_area: rules.detect_in_restricted_area ?? true,
-      detect_in_utility_pole_restricted_area: rules.detect_in_utility_pole_restricted_area ?? false,
       detect_machinery_close_to_pole: rules.detect_machinery_close_to_pole ?? false,
     }
   }
@@ -215,7 +212,7 @@ const VIOLATION_LABELS: Record<string, string> = {
   warning_no_mask: '未佩戴口罩',
   warning_no_safety_vest: '未穿反光背心',
   warning_people_in_controlled_area: '进入锥形桶管控区',
-  warning_people_in_utility_pole_controlled_area: '进入电线杆管控区',
+  detect_machinery_close_to_pole: '机械靠近电线杆',
   warning_fire: '检测到火焰',
   warning_smoke: '检测到烟雾',
 }
@@ -225,7 +222,7 @@ const VIOLATION_PRIORITY: Record<string, number> = {
   warning_smoke: 9,
   warning_no_hardhat: 5,
   warning_people_in_controlled_area: 4,
-  warning_people_in_utility_pole_controlled_area: 4,
+  detect_machinery_close_to_pole: 3,
   warning_no_safety_vest: 1,
   warning_no_mask: 1,
 }
@@ -235,7 +232,7 @@ const VIOLATION_COLORS: Record<string, string> = {
   warning_no_mask: '#FF9800',
   warning_no_safety_vest: '#FF9800',
   warning_people_in_controlled_area: '#E91E63',
-  warning_people_in_utility_pole_controlled_area: '#9C27B0',
+  detect_machinery_close_to_pole: '#9C27B0',
   warning_fire: '#FF5722',
   warning_smoke: '#9E9E9E',
 }
@@ -334,7 +331,6 @@ function connectWebSocket() {
       detections.value = data.detections
       violations.value = data.violations
       conePolygons.value = data.cone_polygons || []
-      polePolygons.value = data.pole_polygons || []
       frameNumber.value = data.frame_number
       timestamp.value = data.timestamp
 
@@ -459,7 +455,6 @@ onUnmounted(() => {
               <el-tag v-if="dangerRules.detect_no_mask" size="small" type="warning" effect="plain">未戴口罩</el-tag>
               <el-tag v-if="dangerRules.detect_no_safety_vest" size="small" type="warning" effect="plain">未穿背心</el-tag>
               <el-tag v-if="dangerRules.detect_in_restricted_area" size="small" type="warning" effect="plain">锥形桶管控区</el-tag>
-              <el-tag v-if="dangerRules.detect_in_utility_pole_restricted_area" size="small" type="warning" effect="plain">电线杆管控区</el-tag>
               <el-tag v-if="dangerRules.detect_machinery_close_to_pole" size="small" type="warning" effect="plain">杆旁机械</el-tag>
             </div>
             <div v-else-if="selectedModels[key] && key === 'fire'" class="danger-rules-display">
@@ -554,7 +549,6 @@ onUnmounted(() => {
               :detections="filteredDetections"
               :violations="filteredViolations"
               :cone-polygons="conePolygons"
-              :pole-polygons="polePolygons"
               :show-labels="true"
             />
             <div v-if="filteredViolations.length > 0" class="violation-overlay" />

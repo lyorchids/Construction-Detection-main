@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Delete } from '@element-plus/icons-vue'
 import { getRecords, deleteRecord, generateAIReportByDate, downloadAIReportWordByDate, type RecordItem, type AIReport } from '../api/history'
 
 const router = useRouter()
@@ -12,21 +13,14 @@ const pageSize = ref(10)
 const loading = ref(false)
 const fileTypeFilter = ref('')
 
-function todayRange(): [Date, Date] {
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0)
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59)
-  return [start, end]
-}
-
-const dateRange = ref<[Date, Date]>(todayRange())
+const dateRange = ref<[Date, Date] | null>(null)
 
 const VIOLATION_LABELS: Record<string, string> = {
   warning_no_hardhat: '未戴安全帽',
   warning_no_mask: '未佩戴口罩',
   warning_no_safety_vest: '未穿反光背心',
   warning_people_in_controlled_area: '进入锥形桶管控区',
-  warning_people_in_utility_pole_controlled_area: '进入电线杆管控区',
+  detect_machinery_close_to_pole: '机械靠近电线杆',
   warning_fire: '检测到火焰',
   warning_smoke: '检测到烟雾',
 }
@@ -36,7 +30,7 @@ const vtypeColor: Record<string, string> = {
   warning_no_mask: '#FF9800',
   warning_no_safety_vest: '#FF9800',
   warning_people_in_controlled_area: '#E91E63',
-  warning_people_in_utility_pole_controlled_area: '#9C27B0',
+  detect_machinery_close_to_pole: '#9C27B0',
   warning_fire: '#FF5722',
   warning_smoke: '#9E9E9E',
 }
@@ -74,22 +68,22 @@ const downloading = ref(false)
 const loadingVisible = ref(false)
 const loadingText = ref('')
 
-const violationFields: { key: keyof RecordItem; label: string; color: string }[] = [
-  { key: 'v_no_hardhat', label: '未戴安全帽', color: '#F44336' },
-  { key: 'v_no_mask', label: '未佩戴口罩', color: '#FF9800' },
-  { key: 'v_no_safety_vest', label: '未穿反光背心', color: '#FF9800' },
-  { key: 'v_in_controlled_area', label: '进入锥形桶管控区', color: '#E91E63' },
-  { key: 'v_in_pole_area', label: '进入电线杆管控区', color: '#9C27B0' },
-  { key: 'v_fire', label: '检测到火焰', color: '#FF5722' },
-  { key: 'v_smoke', label: '检测到烟雾', color: '#9E9E9E' },
+const violationFields: { key: string; label: string; color: string }[] = [
+  { key: 'warning_no_hardhat', label: '未戴安全帽', color: '#F44336' },
+  { key: 'warning_no_mask', label: '未佩戴口罩', color: '#FF9800' },
+  { key: 'warning_no_safety_vest', label: '未穿反光背心', color: '#FF9800' },
+  { key: 'warning_people_in_controlled_area', label: '进入锥形桶管控区', color: '#E91E63' },
+  { key: 'detect_machinery_close_to_pole', label: '机械靠近电线杆', color: '#9C27B0' },
+  { key: 'warning_fire', label: '检测到火焰', color: '#FF5722' },
+  { key: 'warning_smoke', label: '检测到烟雾', color: '#9E9E9E' },
 ]
 
 const activeViolations = computed(() => {
   const r = dialogRecord.value
   if (!r) return []
   return violationFields
-    .filter(f => (r[f.key] ?? 0) > 0)
-    .map(f => ({ label: f.label, count: r[f.key] ?? 0, color: f.color }))
+    .filter(f => (r.violations[f.key] ?? 0) > 0)
+    .map(f => ({ label: f.label, count: r.violations[f.key] ?? 0, color: f.color }))
 })
 
 const dailyOverview = computed(() => {
@@ -177,26 +171,13 @@ function formatDuration(sec: number): string {
   return `${m}分${s}秒`
 }
 
-function validateDateRange(start: Date, end: Date): boolean {
-  const diffMs = end.getTime() - start.getTime()
-  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24))
-  if (diffDays < 1) {
-    ElMessage.warning('日期范围最少为1天')
-    return false
-  }
-  if (diffDays > 7) {
-    ElMessage.warning('日期范围最长不超过7天')
-    return false
-  }
-  return true
+function handleSearch() {
+  page.value = 1
+  fetchRecords()
 }
 
-function onDateRangeChange(val: [Date, Date] | null) {
-  if (!val || !val[0] || !val[1]) return
-  if (!validateDateRange(val[0], val[1])) {
-    dateRange.value = todayRange()
-    return
-  }
+function handleClear() {
+  dateRange.value = null
   page.value = 1
   fetchRecords()
 }
@@ -207,7 +188,6 @@ async function handleDateAIAnalysis() {
     return
   }
   const [start, end] = dateRange.value
-  if (!validateDateRange(start, end)) return
 
   const startStr = formatDate(start)
   const endStr = formatDate(end)
@@ -271,7 +251,7 @@ onMounted(() => {
       <template #header>
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px">
           <h3 style="margin: 0">检测历史记录</h3>
-          <div style="display: flex; align-items: center; gap: 8px">
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
             <el-date-picker
               v-model="dateRange"
               type="daterange"
@@ -279,14 +259,20 @@ onMounted(() => {
               start-placeholder="开始日期"
               end-placeholder="结束日期"
               style="width: 260px"
-              @change="onDateRangeChange"
+              clearable
             />
+            <el-button type="primary" :icon="Search" @click="handleSearch">
+              搜索
+            </el-button>
+            <el-button :icon="Delete" @click="handleClear">
+              清空
+            </el-button>
             <el-button
               type="warning"
               :loading="analyzing"
               @click="handleDateAIAnalysis"
             >
-              AI分析
+              AI报告
             </el-button>
             <el-select
               v-model="fileTypeFilter"

@@ -93,7 +93,7 @@ ruff format .                   # format
 - **Classes**: `PascalCase` — `Utils`, `DangerDetector`, `LocalDetector`, `RedisManager`
 - **Functions/methods**: `snake_case` — `detect_danger`, `normalise_bbox`, `is_driver`
 - **Constants**: `UPPER_SNAKE_CASE` — `CIRCLE_BUFFER_SEGMENTS`, `CLASS_NAMES`
-- **Private methods**: prefix with `_` — `_extract_utility_poles`, `_cluster_utility_poles`
+- **Private methods**: prefix with `_` — `_check_machinery_near_utility_pole`, `_filter_static_machinery`
 - **British English spelling**: `normalise`, `initialises`, `normalised` (follow existing convention)
 
 ### Formatting
@@ -135,7 +135,7 @@ ruff format .                   # format
 | warning_no_hardhat | 未戴安全帽 |
 | warning_no_safety_vest | 未穿反光背心 |
 | warning_people_in_controlled_area | 进入锥形桶管控区 |
-| warning_people_in_utility_pole_controlled_area | 进入电线杆管控区 |
+
 
 ## API Endpoints
 

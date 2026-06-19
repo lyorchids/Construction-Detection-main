@@ -23,7 +23,6 @@ const props = defineProps<{
   detections: Detection[]
   violations: Violation[]
   conePolygons?: number[][][]
-  polePolygons?: number[][][]
   showLabels: boolean
 }>()
 
@@ -35,7 +34,7 @@ const VIOLATION_TYPES: Record<string, string> = {
   warning_no_mask: '⚠ 未戴口罩',
   warning_no_safety_vest: '⚠ 未穿反光背心',
   warning_people_in_controlled_area: '⚠ 进入管控区',
-  warning_people_in_utility_pole_controlled_area: '⚠ 进入电线杆管控区',
+  detect_machinery_close_to_pole: '⚠ 机械靠近电线杆',
   warning_fire: '🔥 火焰',
   warning_smoke: '💨 烟雾',
 }
@@ -45,7 +44,7 @@ const VIOLATION_COLORS: Record<string, string> = {
   warning_no_mask: '#FF9800',
   warning_no_safety_vest: '#FF9800',
   warning_people_in_controlled_area: '#FFC107',
-  warning_people_in_utility_pole_controlled_area: '#795548',
+  detect_machinery_close_to_pole: '#9C27B0',
   warning_fire: '#F44336',
   warning_smoke: '#E53935',
 }
@@ -102,24 +101,6 @@ function draw() {
     }
   }
 
-  // Draw pole polygons (semi-transparent purple)
-  if (props.polePolygons) {
-    for (const poly of props.polePolygons) {
-      if (poly.length < 3) continue
-      ctx.beginPath()
-      ctx.moveTo(poly[0][0], poly[0][1])
-      for (let i = 1; i < poly.length; i++) {
-        ctx.lineTo(poly[i][0], poly[i][1])
-      }
-      ctx.closePath()
-      ctx.fillStyle = 'rgba(156, 39, 176, 0.20)'
-      ctx.fill()
-      ctx.strokeStyle = 'rgba(156, 39, 176, 0.6)'
-      ctx.lineWidth = 2
-      ctx.stroke()
-    }
-  }
-
   const baseWidth = Math.max(2, canvas.width / 300)
   const fontSize = Math.max(14, canvas.width / 56)
 
@@ -154,7 +135,7 @@ function draw() {
   }
 }
 
-watch(() => [props.image, props.detections, props.conePolygons, props.polePolygons], () => {
+watch(() => [props.image, props.detections, props.conePolygons], () => {
   if (props.image) {
     const img = new Image()
     img.onload = () => {

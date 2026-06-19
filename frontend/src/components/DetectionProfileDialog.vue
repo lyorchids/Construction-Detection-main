@@ -35,7 +35,6 @@ function resetForm() {
     dangerNoMask: true,
     dangerNoSafetyVest: true,
     dangerRestrictedArea: true,
-    dangerPoleArea: false,
     dangerMachineryPole: false,
     detectionInterval: 1.0,
     saveScreenshots: true,
@@ -54,7 +53,6 @@ const form = ref({
   dangerNoMask: true,
   dangerNoSafetyVest: true,
   dangerRestrictedArea: true,
-  dangerPoleArea: false,
   dangerMachineryPole: false,
   detectionInterval: 1.0,
   saveScreenshots: true,
@@ -69,7 +67,6 @@ function compatRules(rules: Record<string, any>): Record<string, boolean> {
       detect_no_mask: val,
       detect_no_safety_vest: val,
       detect_in_restricted_area: rules.detect_in_restricted_area ?? true,
-      detect_in_utility_pole_restricted_area: rules.detect_in_utility_pole_restricted_area ?? false,
       detect_machinery_close_to_pole: rules.detect_machinery_close_to_pole ?? false,
     }
   }
@@ -94,7 +91,6 @@ watch(() => props.profile, (p) => {
       dangerNoMask: rules.detect_no_mask ?? true,
       dangerNoSafetyVest: rules.detect_no_safety_vest ?? true,
       dangerRestrictedArea: rules.detect_in_restricted_area ?? true,
-      dangerPoleArea: rules.detect_in_utility_pole_restricted_area ?? false,
       dangerMachineryPole: rules.detect_machinery_close_to_pole ?? false,
       detectionInterval: cfg.detection_interval ?? (cfg.frame_interval ? Math.max(0.5, cfg.frame_interval / 30) : 1.0),
       saveScreenshots: cfg.save_screenshots ?? true,
@@ -115,7 +111,6 @@ function buildConfig() {
         detect_no_mask: form.value.dangerNoMask,
         detect_no_safety_vest: form.value.dangerNoSafetyVest,
         detect_in_restricted_area: form.value.dangerRestrictedArea,
-        detect_in_utility_pole_restricted_area: form.value.dangerPoleArea,
         detect_machinery_close_to_pole: form.value.dangerMachineryPole,
       },
     }
@@ -203,7 +198,6 @@ function handleClose() {
             <el-checkbox v-model="form.dangerNoMask">未佩戴口罩</el-checkbox>
             <el-checkbox v-model="form.dangerNoSafetyVest">未穿反光背心</el-checkbox>
             <el-checkbox v-model="form.dangerRestrictedArea">进入锥形桶管控区</el-checkbox>
-            <el-checkbox v-model="form.dangerPoleArea">进入电线杆管控区</el-checkbox>
             <el-checkbox v-model="form.dangerMachineryPole">机械靠近电线杆</el-checkbox>
           </div>
         </template>

@@ -23,7 +23,6 @@ class DangerDetector:
                 - 'detect_no_safety_vest_or_helmet'
                 - 'detect_near_machinery_or_vehicle'
                 - 'detect_in_restricted_area'
-                - 'detect_in_utility_pole_restricted_area'
                 - 'detect_machinery_close_to_pole'
         """
         self.clusterer = HDBSCAN(min_samples=3, min_cluster_size=2, copy=True)
@@ -32,7 +31,6 @@ class DangerDetector:
             'detect_no_safety_vest_or_helmet',
             'detect_near_machinery_or_vehicle',
             'detect_in_restricted_area',
-            'detect_in_utility_pole_restricted_area',
             'detect_machinery_close_to_pole',
         }
 
@@ -45,7 +43,7 @@ class DangerDetector:
     def detect_danger(
         self,
         datas: list[list[float]],
-    ) -> tuple[dict[str, dict[str, int]], list[Polygon], list[Polygon]]:
+    ) -> tuple[dict[str, dict[str, int]], list[Polygon]]:
         """
         Detects potential safety violations in a construction site.
 
@@ -53,7 +51,6 @@ class DangerDetector:
             Tuple[
                 dict[str, dict[str, int]],  # warnings
                 list[Polygon],              # cone_polygons
-                list[Polygon],              # pole_polygons
             ]
         """
         # 0. Filter static machinery / vehicles
@@ -65,7 +62,6 @@ class DangerDetector:
 
         # 2. Collect polygons
         cone_polygons_raw: list[Polygon] = []
-        pole_polygons_raw: list[Polygon] = []
 
         # (A) detect_in_restricted_area:
         # Check if personnel enter the controlled area
@@ -113,22 +109,10 @@ class DangerDetector:
                 datas, warnings, circle_ratio=0.35,
             )
 
-        # (F) detect_in_utility_pole_restricted_area:
-        # Check if personnel enter the controlled area
-        # formed by the utility pole
-        if (
-            self.detection_items
-            and self.detection_items.get(
-                'detect_in_utility_pole_restricted_area', False,
-            )
-        ):
-            self.check_pole_restricted_area(datas, warnings, pole_polygons_raw)
-
         # 3. Convert polygon coordinates (for front-end visualization)
         cone_polygons_coords = Utils.polygons_to_coords(cone_polygons_raw)
-        pole_polygons_coords = Utils.polygons_to_coords(pole_polygons_raw)
 
-        return warnings, cone_polygons_coords, pole_polygons_coords
+        return warnings, cone_polygons_coords
 
     # Checks if personnel enter the controlled area formed by the safety cone
     def check_cone_restricted_area(
@@ -157,37 +141,6 @@ class DangerDetector:
                 'count': people_count,
             }
 
-    def check_pole_restricted_area(
-        self,
-        datas: list[list[float]],
-        warnings: dict[str, dict[str, int]],
-        pole_polygons: list[Polygon],
-    ) -> None:
-        """
-        Checks if personnel enter the controlled area
-        formed by the utility pole.
-
-        Arg:
-            datas: The input data containing personnel information.
-            warnings: A dictionary to store warning messages.
-            pole_polygons: A list to store the detected polygon areas.
-        """
-        pole_union_poly = Utils.build_utility_pole_union(datas, self.clusterer)
-        if not pole_union_poly.is_empty:
-            pole_polygons.append(pole_union_poly)
-
-            # Count people in the utility pole controlled area
-            count_in_pole_area = Utils.count_people_in_polygon(
-                pole_union_poly, datas,
-            )
-            if count_in_pole_area > 0:
-                warnings['warning_people_in_utility_pole_controlled_area'] = {
-                    'count': count_in_pole_area,
-                }
-
-    # -------------------------------------------------------------------------
-    # Checks if personnel enter the controlled area formed by the utility pole
-    # -------------------------------------------------------------------------
     # def check_safety_violations(
     #     self,
     #     persons: list[list[float]],
@@ -365,10 +318,9 @@ def main() -> None:
         [180, 190, 195, 205, 0.88, 8],  # machinery
     ]
 
-    warnings, cone_polygons, pole_polygons = detector.detect_danger(data)
+    warnings, cone_polygons = detector.detect_danger(data)
     print(f"Warnings: {warnings}")
     print(f"cone_polygons: {cone_polygons}")
-    print(f"pole_polygons: {pole_polygons}")
 
 
 if __name__ == '__main__':

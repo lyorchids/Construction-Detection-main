@@ -18,7 +18,7 @@ VIOLATION_LABELS: dict[str, str] = {
     'warning_no_mask': '未佩戴口罩',
     'warning_no_safety_vest': '未穿反光背心',
     'warning_people_in_controlled_area': '进入锥形桶管控区',
-    'warning_people_in_utility_pole_controlled_area': '进入电线杆危险区域',
+    'detect_machinery_close_to_pole': '机械靠近电线杆',
     'warning_fire': '检测到火焰',
     'warning_smoke': '检测到烟雾',
 }
@@ -28,7 +28,7 @@ SEVERITY_LEVELS: dict[str, str] = {
     'warning_no_mask': 'low',
     'warning_no_safety_vest': 'low',
     'warning_people_in_controlled_area': 'high',
-    'warning_people_in_utility_pole_controlled_area': 'high',
+    'detect_machinery_close_to_pole': 'high',
     'warning_fire': 'critical',
     'warning_smoke': 'high',
 }
@@ -38,7 +38,7 @@ VIOLATION_DESCRIPTIONS: dict[str, str] = {
     'warning_no_mask': '施工人员未佩戴口罩，在粉尘环境下易吸入有害颗粒物，危害呼吸健康',
     'warning_no_safety_vest': '施工人员未穿反光背心，在机械作业区域容易被操作人员忽视，存在碰撞风险',
     'warning_people_in_controlled_area': '人员闯入锥形桶管控区域，存在被施工机械碰撞或误伤的风险',
-    'warning_people_in_utility_pole_controlled_area': '人员进入电线杆危险区域，存在触电或杆体倾倒导致伤害的风险',
+    'detect_machinery_close_to_pole': '施工机械靠近电线杆作业，存在碰撞杆体或触碰高压线的严重风险',
     'warning_fire': '检测到明火，可能引发火灾或爆炸事故，严重危及现场人员和设备安全',
     'warning_smoke': '检测到烟雾，存在火灾隐患，需立即排查烟雾来源，防止火势蔓延',
 }
@@ -48,7 +48,7 @@ VIOLATION_SUGGESTIONS: dict[str, str] = {
     'warning_no_mask': '督促施工人员在粉尘区域规范佩戴口罩，配备符合国家标准的防尘口罩，定期更换滤芯',
     'warning_no_safety_vest': '要求施工人员在机械作业区、车辆通行区等危险区域必须穿戴反光背心，未穿戴者禁止进入',
     'warning_people_in_controlled_area': '加强管控区围挡和警示标识设置，安排专人值守巡视，严禁无关人员进入作业区域',
-    'warning_people_in_utility_pole_controlled_area': '在电线杆周围设置醒目警示标志和物理隔离，划定安全距离范围，严禁靠近作业',
+    'detect_machinery_close_to_pole': '在电线杆周围设置防撞设施和限高警示标志，机械作业时安排专人指挥监护，确保安全距离',
     'warning_fire': '立即组织人员排查火源，切断可能火源，配备足够数量的合规灭火器材，必要时启动消防应急预案并疏散人员',
     'warning_smoke': '立即排查烟雾来源，重点检查电气线路老化、易燃物堆放等情况，消除火灾隐患，配备烟雾报警装置',
 }
@@ -463,7 +463,7 @@ class AIService:
         for vtype, count in sorted(type_count.items(), key=lambda x: -x[1]):
             type_labels.append(f"{VIOLATION_LABELS.get(vtype, vtype)} {count}次")
 
-        area_total = type_count.get('warning_people_in_controlled_area', 0) + type_count.get('warning_people_in_utility_pole_controlled_area', 0)
+        area_total = type_count.get('warning_people_in_controlled_area', 0)
 
         if is_date_range:
             start_str = start_date or '最早记录'

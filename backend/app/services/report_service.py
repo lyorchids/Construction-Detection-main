@@ -22,7 +22,7 @@ VIOLATION_LABELS: dict[str, str] = {
     'warning_no_mask': '未戴口罩',
     'warning_no_safety_vest': '未穿反光背心',
     'warning_people_in_controlled_area': '人员进入管控区',
-    'warning_people_in_utility_pole_controlled_area': '进入电线杆危险区',
+    'detect_machinery_close_to_pole': '机械靠近电线杆',
     'warning_fire': '检测到火焰',
     'warning_smoke': '检测到烟雾',
 }
