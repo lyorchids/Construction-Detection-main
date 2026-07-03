@@ -122,3 +122,5 @@ docker-compose.override.yml
 .opencode/
 
 .txt
+.mp4
+.png
