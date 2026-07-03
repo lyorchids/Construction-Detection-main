@@ -1,209 +1,185 @@
-# 🏗️ 施工现场安全隐患检测系统 (Construction Hazard Detection)
+# Construction Hazard Detection — 施工现场安全隐患检测系统
 
-基于 YOLO 目标检测的施工现场安全智能监控系统，支持图片/视频上传检测、违规实时分析、AI 智能报告、历史案例库管理等全流程功能。适用于施工现场安全管理人员进行日常巡检、违规记录和安全教育培训。
+基于 YOLO 目标检测的施工现场安全智能监控系统，支持图片/视频上传检测、违规实时分析、AI 智能报告、案例库管理等全流程功能，适用于施工现场安全管理人员进行日常巡检、违规记录和安全教育培训。
 
-## ✨ 功能特性
+---
 
-### 🎯 检测识别
-  - **目标检测**：基于双 YOLO 模型（PPE 检测模型 + 火灾烟雾检测模型），识别安全帽、口罩、人员、机械、车辆、锥形桶、电线杆、火焰、烟雾等目标
-  - **违规判定**：7 大违规规则引擎，实时检测 PPE 穿戴、管控区闯入、火灾烟雾等违规行为
-  - **图片检测**：上传单张图片进行检测 + 标注可视化（仅标注违规框，非违规目标不显示）
-  - **视频检测**：上传视频文件逐帧检测 + WebSocket 流式推送 + 检测完成后自动清理原视频
+## Features
 
-### 📊 数据管理
-- **检测记录**：记录每次检测的统计信息、违规详情（含违规截图路径）
-- **历史查询**：支持按时间范围、文件类型分页检索所有检测记录（默认可筛选今天范围）
-- **统计数据**：首页仪表盘展示总检测次数、违规趋势、违规分布
-  
-### 📋 案例库管理
-- **案例创建**：支持手动创建案例和从检测记录一键生成案例
-- **案例分类**：按类型（未戴头盔/危险操作/其他）和严重等级（低/中/高/严重）分类
-- **案例编辑**：支持更新案例标题、描述、处置建议、处理过程等
-- **案例检索**：按类型/严重等级/关键词筛选
-- **种子数据**：系统启动时自动初始化 10 个预设案例
+### Detection & Recognition
 
-### ⚙️ 检测配置管理
-- **配置模板**：支持创建图片/视频两类检测配置模板，预设模型选择、违规规则开关、置信度阈值（阈值传参修复——此前 YOLO 默认 `conf=0.25` 会丢弃低置信度检测，现已改为用户真实阈值）
-- **折叠式配置卡**：图片/视频检测页使用折叠卡片展示配置摘要，展开后可编辑全部参数
-- **旧配置兼容**：自动将旧版 `detect_no_safety_vest_or_helmet` 配置迁移为三个独立开关
-- **视频专属参数**：检测间隔（0.5-10秒滑条）、保存违规截图开关
+- **Multi-Model Detection** — Dual YOLO models (PPE detection + fire/smoke detection) recognizing hardhats, masks, personnel, machinery, vehicles, safety cones, utility poles, fire, and smoke
+- **7 Violation Rules** — Real-time violation detection engine covering PPE compliance, restricted area intrusion, machinery near utility poles, fire, and smoke
+- **Image Detection** — Upload single images for detection with annotated visualization
+- **Video Detection** — Upload video files for frame-by-frame detection with WebSocket streaming, configurable detection intervals, and automatic video cleanup after processing
+- **Detection Profiles** — Save and load detection configuration templates (model selection, threshold, danger rule toggles) for quick reuse
 
-### 🎬 视频检测优化
-- **ByteTrack 跟踪**：Ultralytics 内置 ByteTrack 为每个目标分配唯一 ID，跨帧持续跟踪
-- **每人状态机**：每人的每种违规类型独立状态机（SAFE→WARN→ACTIVE），累计 N 帧后才触发，防止单帧误检
-- **违规去重**：同一人同一违规触发后进入 30s 冷却期，不重复记录
-- **固定时间间隔检测**：可配置 0.5-10 秒检测间隔，非检测帧复用缓存检测结果（框、多边形持续显示）
-- **并行检测**：PPE 和火灾模型串行执行（GPU 并行收益仅 ~9%，实测 55ms 内完成，无需线程复杂度）
+### Data Management
 
-### 🤖 AI 智能分析
-- **违规报告**：调用 DeepSeek / 通义千问等 AI 模型生成标准违规分析报告
-- **报告结构**：基本信息 + 检测概况 + 违规详情（固定模板描述/建议） + 安全评估（综合评价/风险因素/主要发现） + 总体建议
-- **单条分析**：对某条检测记录进行单次检测 AI 分析（侧重建材视频内时间维度，如"第X秒"）
-- **时段分析**：对指定日期范围（1~7天）内的所有违规记录进行综合 AI 分析（侧重建日趋势、反复违规模式），支持历史首页直接操作
-- **离线降级**：AI 服务不可用时自动降级为离线模板报告，不中断业务流程
-- **Word 导出**：AI 分析报告支持一键下载 .docx 格式，包含违规截图嵌入
+- **Detection Records** — Complete record of every detection session with statistics, violation details, and screenshots
+- **History Query** — Paginated record list with date range and file type filtering
+- **Statistics Dashboard** — Home page with total counts, 7-day trends, and violation type distribution (ECharts)
+- **Violation Screenshots** — Automatic screenshot capture for each violation type, embedded in reports
 
-## 🏗️ 系统架构
+### Safety Case Management
 
-```
-┌─────────────────────────────────────────────────┐
-│                    Frontend                      │
-│              Vue 3 + Element Plus                │
-│         Axios ←→ WebSocket ←→ ECharts            │
-└──────────────────┬──────────────────────────────┘
-                   │ HTTP / WS
-┌──────────────────▼──────────────────────────────┐
-│                   Backend                        │
-│              FastAPI + SQLAlchemy                │
-│   ┌──────────┐ ┌──────────┐ ┌────────────────┐  │
-│   │YOLODetector│ │Danger   │ │  AI Service    │  │
-│   │(模型推理)  │ │Detector │ │(违规报告生成)  │  │
-│   └──────────┘ └──────────┘ └────────────────┘  │
-│   ┌──────────┐ ┌──────────┐ ┌────────────────┐  │
-│   │CaseService│ │Detection │ │  ReportService │  │
-│   │(案例管理) │ │Service   │ │ (Word报告导出) │  │
-│   └──────────┘ └──────────┘ └────────────────┘  │
-└──────────────────┬──────────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────┐
-│                 Storage                          │
-│  SQLite (detection.db) │ 文件系统 (uploads/)      │
-│  ┌────────────┐ ┌───────────┐ ┌──────────────┐  │
-│  │检测记录表   │ │违规记录表  │ │ 案例库表      │  │
-│  └────────────┘ └───────────┘ └──────────────┘  │
-└─────────────────────────────────────────────────┘
-```
+- **Auto Case Creation** — One-click case generation from detection records
+- **Case Classification** — By type (no hardhat / dangerous operation / other) and severity (low / medium / high / critical)
+- **Case CRUD** — Full create, read, update, delete with keyword search and filters
+- **Seed Data** — 10 preset safety cases auto-initialized on first startup
 
-### 🎬 视频检测架构
+### AI-Powered Analysis
+
+- **AI Violation Report** — Generate structured violation analysis reports using DeepSeek / Qwen / OpenAI-compatible APIs
+- **Report Structure** — Basic info + detection summary + violation details (templated descriptions/suggestions) + safety assessment (overall evaluation / risk factors / key findings) + overall recommendations
+- **Single Record Analysis** — Time-dimension analysis of a single detection record
+- **Date Range Analysis** — Comprehensive analysis across multiple records with daily trends and recurring violation patterns
+- **Offline Fallback** — Graceful degradation to template-based reports when AI service is unavailable
+- **Word Export** — One-click .docx download with embedded violation screenshots
+
+### Real-Time Video Processing
+
+- **ByteTrack Integration** — Ultralytics built-in ByteTrack assigns unique IDs to each target for cross-frame tracking
+- **Throttled Detection** — Configurable detection interval (0.5–10s); non-detection frames reuse cached results
+- **Sequential Model Execution** — PPE and fire models run sequentially (GPU parallelism yields only ~9% gain)
+- **Cached Frame Display** — Detection boxes and polygons persist between detection intervals for smooth playback
+
+---
+
+## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                      视频流处理流水线                          │
-├──────────────────────────────────────────────────────────────┤
-│  帧输入 (每帧读取 + 编码 + WebSocket发送)                     │
-│                                                              │
-│  ┌──────────────────────────────────────────────────┐       │
-│  │  检测门控 (固定时间间隔, 默认1秒)                   │       │
-│  │  if time.now - last_detection >= interval:        │       │
-│  │    → 执行PPE检测 (36ms) + Fire检测 (18ms)         │       │
-│  │    → 更新状态机 + 违规判定                          │       │
-│  │    → 更新检测结果缓存                               │       │
-│  │  else:                                             │       │
-│  │    → 复用缓存结果 (框、多边形持续显示)                │       │
-│  └──────────────────────────────────────────────────┘       │
-│                          │                                   │
-│  ┌───────────────────────▼───────────────────────────┐      │
-│  │  每人违规状态机                                    │      │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐        │      │
-│  │  │ Person1  │  │ Person2  │  │ Person3  │  ...    │      │
-│  │  │ SAFE→WARN│  │ ACTIVE   │  │ COOLDOWN│        │      │
-│  │  │ →ACTIVE  │  │          │  │ →SAFE   │        │      │
-│  │  └──────────┘  └──────────┘  └──────────┘        │      │
-│  └───────────────────────┬───────────────────────────┘      │
-│                          │                                   │
-│  ┌───────────────────────▼───────────────────────────┐      │
-│  │  输出: 帧数据 (image + cached_detections + violations)  │
-│  │  每帧发送至前端 (Canvas持续渲染 + 多边形 + 违规标记)     │
-│  └───────────────────────────────────────────────────┘      │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                    Frontend                          │
+│              Vue 3 + TypeScript                      │
+│         Axios ←→ WebSocket ←→ ECharts               │
+└───────────────────┬─────────────────────────────────┘
+                    │ HTTP / WebSocket
+┌───────────────────▼─────────────────────────────────┐
+│                   Backend                            │
+│              FastAPI + SQLAlchemy                    │
+│   ┌────────────┐ ┌────────────┐ ┌────────────────┐  │
+│   │ YOLO       │ │ Danger     │ │  AI Service    │  │
+│   │ Detector   │ │ Detector   │ │ (报告生成)     │  │
+│   └────────────┘ └────────────┘ └────────────────┘  │
+│   ┌────────────┐ ┌────────────┐ ┌────────────────┐  │
+│   │ Case       │ │ Detection  │ │  Report        │  │
+│   │ Service    │ │ Service    │ │  Service       │  │
+│   └────────────┘ └────────────┘ └────────────────┘  │
+└───────────────────┬─────────────────────────────────┘
+                    │
+┌───────────────────▼─────────────────────────────────┐
+│                 Storage                              │
+│  SQLite │ Uploads │ Violation Screenshots │ Reports  │
+│  ┌──────────┐ ┌────────┐ ┌──────────┐ ┌──────────┐ │
+│  │Detection │ │Violation│ │Violation │ │ Cases    │ │
+│  │Records   │ │Counts   │ │Details   │ │          │ │
+│  └──────────┘ └────────┘ └──────────┘ └──────────┘ │
+└─────────────────────────────────────────────────────┘
 ```
 
-### 检测时序示意 (30fps, 间隔 1s)
+### Video Detection Pipeline
 
 ```
-帧:    1   2   3  ...  30   31   32  ...  60   61   62
-时间:  0   33  66  ...  1000 1033 1066 ... 2000 2033 2066 ms
-      [===== PPE+Fire检测 =====]   [===== PPE+Fire检测 =====]
-      (55ms)                         (55ms)
-      ↓ 缓存更新                      ↓ 缓存更新
-      [========= 复用缓存检测框 ==========]
-      每帧发送 (视频流畅播放, 检测框持续显示)
+ Frame Input (read + encode + WebSocket send)
+     │
+     ▼
+ ┌─────────────────────────────────────────┐
+ │ Detection Gate (fixed interval, default 0.5s) │
+ │ if time.now - last_detection >= interval:     │
+ │   → Run PPE model (36ms) + Fire model (18ms)  │
+ │   → Run DangerDetector (violation rules)       │
+ │   → Update cached warnings + polygons          │
+ │ else:                                          │
+ │   → Reuse cached results                       │
+ └─────────────────────┬─────────────────────────┘
+                       │
+ ┌─────────────────────▼─────────────────────────┐
+ │ Output: frame data (image + detections +       │
+ │ violations + cone polygons)                    │
+ │ Sent every frame (smooth playback)             │
+ └───────────────────────────────────────────────┘
 ```
 
-### 性能数据 (GPU: CUDA, 模型: yolo26l + fire_smoke)
+### Performance (GPU: CUDA, Models: yolo26l + fire_smoke)
 
-| 指标 | 值 |
-|------|----|
-| PPE 检测耗时 | 36.5ms ±0.7ms |
-| Fire 检测耗时 | 18.8ms ±0.6ms |
-| 串行总耗时 | 55.3ms ±0.8ms |
-| 并行总耗时 (ThreadPoolExecutor) | 50.5ms ±1.4ms |
-| 并行收益 | ~9% (GPU CUDA 自动串行化, 收益可忽略) |
+| Metric | Value |
+|--------|-------|
+| PPE Inference | 36.5ms ±0.7ms |
+| Fire Inference | 18.8ms ±0.6ms |
+| Sequential Total | 55.3ms ±0.8ms |
 
-### 状态机参数
+---
 
-| 参数 | 值 | 说明 |
-|------|----|------|
-| `VIOLATION_MIN_FRAMES` | 10 | 连续违规帧数达标后才触发 |
-| `RECOVER_FRAMES` | 15 | 连续合规帧数后退出违规状态 |
-| `COOLDOWN_SECONDS` | 30 | 同一人同一违规触发后冷却时间 |
+## Tech Stack
 
-## 🛠️ 技术栈
+| Layer | Technology |
+|-------|-----------|
+| **Backend** | Python 3.9+, FastAPI, SQLAlchemy 2.0 |
+| **Database** | SQLite |
+| **Object Detection** | Ultralytics YOLO (v8/v11) |
+| **Image Processing** | OpenCV, NumPy, Pillow |
+| **Geometric Analysis** | Shapely, scikit-learn |
+| **AI Analysis** | OpenAI SDK (DeepSeek / Qwen compatible) |
+| **Report Generation** | python-docx |
+| **Frontend** | Vue 3 + TypeScript (Composition API) |
+| **UI** | Element Plus |
+| **Charts** | ECharts 6 |
+| **HTTP** | Axios |
+| **Build** | Vite |
 
-| 层次 | 技术 | 说明 |
-|------|------|------|
-| **后端框架** | FastAPI | Python 异步 Web 框架 |
-| **数据库** | SQLite + SQLAlchemy 2.0 | ORM + 本地文件存储 |
-| **目标检测** | Ultralytics YOLO | 模型推理（YOLO v8/v11） |
-| **图像处理** | OpenCV, NumPy | 图像读取、标注绘制 |
-| **AI 分析** | OpenAI SDK | DeepSeek / 通义千问等兼容 API |
-| **前端框架** | Vue 3 + TypeScript | Composition API |
-| **UI 组件** | Element Plus | 表单、表格、弹窗等 |
-| **图表** | ECharts 6 | Home 页统计图表 |
-| **HTTP** | Axios | 前端请求封装 |
-| **构建** | Vite | 开发构建工具 |
+---
 
-## 🚀 快速开始
+## Quick Start
 
-### 环境要求
+### Prerequisites
+
 - Python 3.9+
 - Node.js 18+
-- (可选) CUDA 支持的 GPU
+- (Optional) CUDA-capable GPU
 
-### 1. 安装后端
+### 1. Backend Installation
 
 ```bash
-# 创建虚拟环境
+# Create virtual environment (optional)
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或 venv\Scripts\activate  (Windows)
+# source venv/bin/activate  (Linux/Mac)
+# venv\Scripts\activate     (Windows)
 
-# 安装依赖
+# Install dependencies
 pip install -r backend/requirements.txt
-
-# 额外依赖（未在 requirements.txt 中）
 pip install httpx aiofiles python-docx
 ```
 
-### 2. 配置环境变量
+### 2. Configure Environment
 
 ```bash
 cp backend/.env.example backend/.env
 ```
 
-编辑 `backend/.env`:
+Edit `backend/.env`:
 
 ```env
-AI_API_KEY=sk-your-api-key              # AI API Key（用于AI分析报告）
-AI_BASE_URL=https://api.deepseek.com/v1  # AI API 地址
-AI_MODEL=deepseek-chat                    # AI 模型名称
-DEVICE=cuda:0                             # 检测设备 (cuda:0 或 cpu)
+AI_API_KEY=sk-your-api-key
+AI_BASE_URL=https://api.deepseek.com/v1
+AI_MODEL=deepseek-chat
+DEVICE=cuda:0
 ```
 
-### 3. 下载模型
+### 3. Download Models
 
-将 YOLO 模型文件（如 `yolo26l.pt`）放入 `backend/models/` 目录。
+Place YOLO model files (e.g., `yolo26l.pt`, `fire_smoke.pt`) into `backend/models/`.
 
-### 4. 启动后端
+### 4. Start Backend
 
 ```bash
 cd backend
 python run.py
 ```
 
-API 服务启动于 `http://localhost:8000`
+API server starts at `http://localhost:8000`
 
-### 5. 安装启动前端
+### 5. Start Frontend
 
 ```bash
 cd frontend
@@ -211,197 +187,221 @@ npm install
 npm run dev
 ```
 
-前端开发服务器启动于 `http://localhost:5173`
+Frontend dev server starts at `http://localhost:5173`
 
-> **注意**：`npm run build` 会因 vue-tsc 类型检查报错（预存在文件类型问题），请使用 `npx vite build` 进行生产构建。
+---
 
-## 📖 API 文档
+## API Endpoints
 
-服务启动后访问 `http://localhost:8000/docs` 查看 Swagger 文档。
+API documentation available at `http://localhost:8000/docs` (Swagger UI).
 
-### 核心 API 一览
+### Upload
 
-#### 上传
-| 方法 | 路由 | 说明 |
-|------|------|------|
-| POST | `/api/v1/upload/image` | 上传图片（jpg/jpeg/png/bmp/webp, ≤10MB） |
-| POST | `/api/v1/upload/video` | 上传视频（mp4/avi/mov/mkv/flv, ≤200MB） |
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/api/v1/upload/image` | Upload image (jpg/jpeg/png/bmp/webp, ≤10MB) |
+| POST | `/api/v1/upload/video` | Upload video (mp4/avi/mov/mkv/flv, ≤200MB) |
 
-#### 检测
-| 方法 | 路由 | 说明 |
-|------|------|------|
-| POST | `/api/v1/image/detect` | 图片危险检测（返回标注 base64 + 违规列表） |
+### Detection
 
-#### 历史记录
-| 方法 | 路由 | 说明 |
-|------|------|------|
-| GET | `/api/v1/records` | 分页查询检测记录（支持 file_type/start_date/end_date 过滤） |
-| GET | `/api/v1/records/{id}` | 单条记录详情 |
-| GET | `/api/v1/records/{id}/violations` | 违规列表 |
-| DELETE | `/api/v1/records/{id}` | 删除记录 |
-| GET | `/api/v1/stats` | 统计数据 |
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/api/v1/image/detect` | Image hazard detection (returns annotated base64 + violations) |
+| WS | `/ws/video/detect/{path}` | WebSocket video detection (actions: start/pause/resume/stop) |
 
-#### 案例库
-| 方法 | 路由 | 说明 |
-|------|------|------|
-| POST | `/api/v1/cases` | 手动创建案例 |
-| POST | `/api/v1/cases/from-record/{id}` | 从检测记录一键生成案例 |
-| GET | `/api/v1/cases` | 分页查询案例（支持 case_type/severity/keyword 过滤） |
-| GET | `/api/v1/cases/{id}` | 案例详情 |
-| PUT | `/api/v1/cases/{id}` | 更新案例 |
-| DELETE | `/api/v1/cases/{id}` | 删除案例 |
+### Records & History
 
-#### 检测配置
-| 方法 | 路由 | 说明 |
-|------|------|------|
-| GET | `/api/v1/profiles` | 获取所有配置模板（支持 type 过滤） |
-| POST | `/api/v1/profiles` | 创建配置模板 |
-| GET | `/api/v1/profiles/{id}` | 获取单条配置详情 |
-| PUT | `/api/v1/profiles/{id}` | 更新配置模板 |
-| DELETE | `/api/v1/profiles/{id}` | 删除配置模板 |
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/v1/records` | Paginated records (filters: file_type, start_date, end_date) |
+| GET | `/api/v1/records/{id}` | Single record detail |
+| GET | `/api/v1/records/{id}/violations` | Violation list for a record |
+| DELETE | `/api/v1/records/{id}` | Delete record and associated screenshots |
+| GET | `/api/v1/stats` | Statistics (totals, today, 7-day trends, violation distribution) |
 
-#### 报告
-| 方法 | 路由 | 说明 |
-|------|------|------|
-| POST | `/api/v1/report/generate` | 生成 Word 报告 |
-| POST | `/api/v1/report/ai-analysis` | AI 智能分析报告（支持 `record_id` 单条或 `start_date`/`end_date` 时段） |
-| POST | `/api/v1/report/ai-analysis/download` | 下载 AI 分析报告为 .docx（含违规截图） |
-| GET | `/api/v1/report/download/{filename}` | 下载报告文件 |
+### Safety Cases
 
-## 🖥️ 前端页面
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/api/v1/cases` | Create a case manually |
+| POST | `/api/v1/cases/from-record/{id}` | Auto-create case from detection record |
+| GET | `/api/v1/cases` | Paginated cases (filters: case_type, severity, keyword) |
+| GET | `/api/v1/cases/{id}` | Case detail |
+| PUT | `/api/v1/cases/{id}` | Update case |
+| DELETE | `/api/v1/cases/{id}` | Delete case |
 
-| 路由 | 页面 | 功能 |
-|------|------|------|
-| `/` | Home.vue | 首页统计仪表盘（ECharts 图表） |
-| `/image-detect` | ImageDetect.vue | 图片上传与检测 |
-| `/video-detect` | VideoDetect.vue | 视频上传与检测（固定间隔 + 缓存框 + 加载动画） |
-| `/history` | History.vue | 检测历史记录列表（支持日期范围筛选 + 时段 AI 分析报告生成） |
-| `/detail/:id` | Detail.vue | 记录详情 + AI 分析报告 + 违规截图预览 + 下载 Word 报告 |
-| `/cases` | CaseList.vue | 案例库列表（筛选/搜索） |
-| `/cases/create` | CaseCreate.vue | 创建案例（手动/从记录） |
-| `/cases/:id` | CaseDetail.vue | 案例详情（查看/编辑） |
-| `/profiles` | DetectionProfiles.vue | 检测配置模板管理（CRUD） |
+### Reports & AI Analysis
 
-## ⚠️ 违规检测规则
+| Method | Route | Description |
+|--------|-------|-------------|
+| POST | `/api/v1/report/generate` | Generate Word report (optional start_date/end_date) |
+| POST | `/api/v1/report/ai-analysis` | AI analysis (record_id for single, or start_date/end_date for range) |
+| POST | `/api/v1/report/ai-analysis/download` | Download AI report as .docx with screenshots |
+| GET | `/api/v1/report/download/{filename}` | Download generated report |
 
-| 类型Key | 说明 | 判定逻辑 |
-|---------|------|----------|
-| `warning_no_hardhat` | 未戴安全帽 | Person 与 NO-Hardhat 高度重叠 |
-| `warning_no_mask` | 未戴口罩 | 检测到 NO-Mask 目标 |
-| `warning_no_safety_vest` | 未穿反光背心 | Person 与 NO-Safety Vest 高度重叠 |
-| `warning_people_in_controlled_area` | 进入锥形桶管控区 | Person 进入 Safety Cone 围成的多边形区域 |
-| `warning_fire` | 检测到火焰 | 火灾模型检测到 fire 目标 |
-| `warning_smoke` | 检测到烟雾 | 火灾模型检测到 smoke 目标 |
+### Detection Profiles
 
-### YOLO 类别映射
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/v1/profiles` | List profiles (optional type filter) |
+| POST | `/api/v1/profiles` | Create profile |
+| GET | `/api/v1/profiles/{id}` | Get profile detail |
+| PUT | `/api/v1/profiles/{id}` | Update profile |
+| DELETE | `/api/v1/profiles/{id}` | Delete profile |
 
-| ID | 标签 | 说明 |
-|----|------|------|
-| 0 | Hardhat | 安全帽 |
-| 1 | Mask | 口罩 |
-| 2 | NO-Hardhat | 未戴安全帽（人头） |
-| 3 | NO-Mask | 未戴口罩 |
-| 4 | NO-Safety Vest | 未穿反光背心 |
-| 5 | Person | 人员 |
-| 6 | Safety Cone | 锥形桶 |
-| 7 | Safety Vest | 反光背心 |
-| 8 | Machinery | 机械设备 |
-| 9 | Utility Pole | 电线杆 |
-| 10 | Vehicle | 车辆 |
+### Models
 
-## 💡 AI 分析服务
+| Method | Route | Description |
+|--------|-------|-------------|
+| GET | `/api/v1/models` | List available detection models |
 
-### 配置 AI
+---
 
-编辑 `backend/.env` 配置 AI 服务：
+## Frontend Routes
+
+| Route | Page | Description |
+|-------|------|-------------|
+| `/` | Home | Statistics dashboard with ECharts |
+| `/image-detect` | ImageDetect | Image upload and hazard detection |
+| `/video-detect` | VideoDetect | Video upload with WebSocket streaming |
+| `/history` | History | Detection records list with filters |
+| `/detail/:id` | Detail | Record detail + AI analysis + screenshots |
+| `/cases` | CaseList | Safety case management |
+| `/cases/create` | CaseCreate | Create new case |
+| `/cases/:id` | CaseDetail | Case detail / edit |
+| `/profiles` | DetectionProfiles | Detection profile management |
+
+---
+
+## Violation Detection Rules
+
+| Type Key | Description | Detection Logic |
+|----------|-------------|-----------------|
+| `warning_no_hardhat` | Worker without hardhat | Person overlapping NO-Hardhat bounding box |
+| `warning_no_mask` | Worker without mask | NO-Mask detected |
+| `warning_no_safety_vest` | Worker without safety vest | Person overlapping NO-Safety Vest bounding box |
+| `warning_people_in_controlled_area` | Person in cone-restricted zone | Person inside polygon formed by Safety Cones |
+| `detect_machinery_close_to_pole` | Machinery near utility pole | Machinery/Vehicle within danger circle of Utility Pole |
+| `warning_fire` | Fire detected | Fire model detects fire target |
+| `warning_smoke` | Smoke detected | Fire model detects smoke target |
+
+### Severity Levels
+
+| Type | Severity |
+|------|----------|
+| `warning_no_hardhat` | High |
+| `warning_no_mask` | Low |
+| `warning_no_safety_vest` | Low |
+| `warning_people_in_controlled_area` | High |
+| `detect_machinery_close_to_pole` | High |
+| `warning_fire` | Critical |
+| `warning_smoke` | High |
+
+### YOLO Class ID Mapping
+
+| ID | Label | Description |
+|----|-------|-------------|
+| 0 | Hardhat | Safety helmet |
+| 1 | Mask | Face mask |
+| 2 | NO-Hardhat | Person without hardhat |
+| 3 | NO-Mask | Person without mask |
+| 4 | NO-Safety Vest | Person without safety vest |
+| 5 | Person | Worker |
+| 6 | Safety Cone | Traffic cone |
+| 7 | Safety Vest | Safety vest (object) |
+| 8 | Machinery | Construction machinery |
+| 9 | Utility Pole | Power/utility pole |
+| 10 | Vehicle | Vehicle |
+
+---
+
+## AI Analysis Service
+
+### Configuration
 
 ```env
 AI_API_KEY=sk-your-api-key
-AI_BASE_URL=https://api.deepseek.com/v1        # DeepSeek
-# 或
-AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1  # 阿里云通义千问
-AI_MODEL=deepseek-chat                          # 或 qwen3-max 等
+AI_BASE_URL=https://api.deepseek.com/v1          # DeepSeek
+AI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1  # Alibaba Qwen
+AI_MODEL=deepseek-chat                            # or qwen3-max
 ```
 
-### 分析报告结构
+### Report Structure
 
-AI 分析报告包含以下结构化字段：
+- **Basic Info**: Report ID, time, filename / analysis period, detection type, duration, total targets
+- **Summary**: Total violations, risk level
+- **Violation Details**: Type, count, first occurrence time, severity, description (template), suggestion (template)
+- **Safety Assessment**: Overall evaluation, risk factors (list), key findings
+- **Overall Suggestions**: Prioritized corrective actions
+- **Expert Signature**: AI safety expert
 
-- **基本信息**：报告编号、时间、文件名/分析时段、检测类型、检测时长、目标总数
-- **检测概况**：违规总数、风险等级
-- **违规详情**：每条违规的**类型**、**数量**、**首次出现时间**（单条模式为"第X秒"，时段模式为"日期"）、**严重等级**、**违规描述**（固定模板）、**整改建议**（固定模板）
-- **安全评估**：**综合评价**（分析违规数据反映的管理问题和潜在风险）、**风险因素**（list）、**主要发现**（核心发现和趋势判断）
-- **总体建议**：综合安全建议
-- **专家签名**：AI 安全专家署名
+> Violation descriptions and suggestions use built-in templates; AI only generates the safety assessment and overall suggestions, ensuring offline report generation capability.
 
-> 违规描述和整改建议使用代码内置的固定模板生成，AI 仅负责安全评估和总体建议部分，保证离线也可生成完整报告。
+---
 
-## 📁 项目结构
+## Project Structure
 
 ```
 ├── backend/
 │   ├── app/
-│   │   ├── api/                  # FastAPI 路由层
-│   │   │   ├── upload.py         # 文件上传
-│   │   │   ├── image_detect.py   # 图片检测
-│   │   │   ├── video_detect.py   # 视频检测
-│   │   │   ├── history.py        # 历史记录
-│   │   │   ├── report.py         # 报告生成 + AI 分析
-│   │   │   ├── cases.py          # 案例库
-│   │   │   ├── detection_profiles.py  # 检测配置模板
-│   │   │   └── models.py         # 模型管理
-│   │   ├── core/                 # 核心检测引擎
-│   │   │   ├── detector.py       # YOLO 模型推理（含内置 ByteTrack 跟踪）
-│   │   │   ├── danger_rules.py   # 7 大危险判定规则引擎
-│   │   │   ├── violation_state.py # 每人违规状态机（SAFE/WARN/ACTIVE/COOLDOWN）
-│   │   │   ├── streamer.py       # 视频流检测（固定时间间隔 + 状态机去重 + 结果缓存）
-│   │   │   └── annotator.py      # 标注绘制
-│   │   ├── models/               # SQLAlchemy 数据模型
-│   │   │   ├── detection.py      # 检测记录/违规
-│   │   │   └── case.py           # 案例库
-│   │   ├── schemas/              # Pydantic 数据模式
-│   │   │   ├── detection.py      # 检测相关
-│   │   │   └── case.py           # 案例相关
-│   │   ├── services/             # 业务逻辑层
-│   │   │   ├── detection_service.py   # 检测记录服务
-│   │   │   ├── ai_service.py          # AI 分析服务（两套提示词：单条/时段）
-│   │   │   ├── report_service.py      # Word 报告服务
-│   │   │   ├── case_service.py        # 案例库服务
-│   │   │   ├── detection_profile_service.py  # 配置模板服务
-│   │   │   └── seed_cases.py          # 案例种子数据
-│   │   ├── config.py             # 配置管理
-│   │   ├── database.py           # 数据库连接
-│   │   └── main.py               # FastAPI 应用入口
-│   ├── uploads/                  # 上传文件存储
-│   ├── violations/               # 违规截图存储
-│   ├── reports/                  # 报告文件存储
-│   ├── models/                   # YOLO 模型文件
-│   └── run.py                    # 启动脚本
+│   │   ├── api/                   # FastAPI route handlers
+│   │   │   ├── upload.py          # File upload endpoints
+│   │   │   ├── image_detect.py    # Image detection endpoint
+│   │   │   ├── video_detect.py    # WebSocket video detection
+│   │   │   ├── history.py         # Records, stats, violations
+│   │   │   ├── report.py          # Reports + AI analysis
+│   │   │   ├── cases.py           # Safety cases CRUD
+│   │   │   ├── models.py          # Model listing
+│   │   │   └── detection_profiles.py  # Detection profiles
+│   │   ├── core/                  # Detection engine
+│   │   │   ├── detector.py        # YOLO model inference
+│   │   │   ├── danger_rules.py    # 7 violation rule detectors
+│   │   │   ├── streamer.py        # Video WebSocket streaming
+│   │   │   ├── annotator.py       # Frame annotation drawing
+│   │   │   └── model_registry.py  # Model management
+│   │   ├── models/                # SQLAlchemy models
+│   │   │   ├── detection.py       # DetectionRecord, Violation
+│   │   │   ├── violation_count.py # Aggregated violation counts
+│   │   │   ├── case.py            # Safety case
+│   │   │   └── detection_profile.py  # Detection profile
+│   │   ├── schemas/               # Pydantic schemas
+│   │   ├── services/              # Business logic
+│   │   │   ├── detection_service.py    # Record CRUD + stats
+│   │   │   ├── ai_service.py           # AI analysis (single/range)
+│   │   │   ├── report_service.py       # Word document generation
+│   │   │   ├── case_service.py         # Case CRUD + auto-create
+│   │   │   ├── detection_profile_service.py  # Profile CRUD
+│   │   │   └── seed_cases.py           # Seed data
+│   │   ├── utils/
+│   │   │   └── bbox_utils.py      # Geometry utilities
+│   │   ├── config.py              # Environment configuration
+│   │   ├── database.py            # SQLAlchemy engine/session
+│   │   └── main.py                # FastAPI application entry
+│   ├── models/                    # YOLO model files
+│   ├── uploads/                   # Uploaded files
+│   ├── violations/                # Violation screenshots
+│   ├── reports/                   # Generated reports
+│   ├── config/
+│   │   └── models.json            # Model configurations
+│   ├── migrate_violation_counts.py  # Data migration script
+│   └── run.py                     # Server startup
 ├── frontend/
 │   ├── src/
-│   │   ├── views/                # Vue 页面组件
-│   │   ├── api/                  # Axios API 封装
-│   │   ├── router/               # Vue Router 配置
-│   │   ├── store/                # Pinia 状态管理
-│   │   └── components/           # 公共 UI 组件
+│   │   ├── views/                 # Vue page components
+│   │   ├── api/                   # Axios API wrappers
+│   │   ├── router/                # Vue Router
+│   │   ├── stores/                # Pinia state
+│   │   └── components/            # Shared UI components
 │   └── package.json
-├── esay_detector/                # 轻量本地检测模块（独立运行）
+├── esay_detector/                 # Standalone local detection
+├── hazard_detector/                # Legacy full detection module
 ├── docs/
-│   └── datasets.md               # 开源数据集推荐
-└── README.md
+│   └── datasets.md                # Open dataset references
+└── AGENTS.md                     # AI agent instructions
 ```
 
-## 📦 训练数据
+---
 
-`docs/datasets.md` 收集了针对施工安全场景的 16+ 个开源数据集链接，覆盖：
-
-- 施工安全 PPE 检测
-- 火灾/烟雾检测
-- 高处坠落检测
-- 人员打斗检测
-
-推荐使用 YOLOv11 分别训练两个模型（高分辨率 PPE 检测 + 标准分辨率危险区域检测）。
-
-## 📜 许可
+## License
 
 本项目为内部安全管理系统，仅供学习和参考使用。
