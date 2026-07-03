@@ -120,3 +120,5 @@ docker-compose.override.yml
 .env
 
 .opencode/
+
+.txt

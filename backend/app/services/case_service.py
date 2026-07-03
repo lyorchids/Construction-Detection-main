@@ -8,12 +8,17 @@ from sqlalchemy.orm import Session
 
 from app.models.case import Case
 from app.models.detection import DetectionRecord, Violation
+from app.models.violation_count import ViolationCount
 from app.schemas.case import CaseCreate, CaseUpdate
 
 CASE_TYPE_MAP: dict[str, str] = {
     'warning_no_hardhat': 'no_hardhat',
+    'warning_no_mask': 'other',
+    'warning_no_safety_vest': 'other',
     'warning_people_in_controlled_area': 'dangerous_operation',
     'detect_machinery_close_to_pole': 'dangerous_operation',
+    'warning_fire': 'dangerous_operation',
+    'warning_smoke': 'dangerous_operation',
 }
 
 CASE_TYPE_LABELS: dict[str, str] = {
@@ -24,9 +29,12 @@ CASE_TYPE_LABELS: dict[str, str] = {
 
 SEVERITY_MAP: dict[str, str] = {
     'warning_no_hardhat': 'high',
+    'warning_no_mask': 'low',
+    'warning_no_safety_vest': 'low',
     'warning_people_in_controlled_area': 'high',
     'detect_machinery_close_to_pole': 'high',
-    'warning_no_safety_vest': 'low',
+    'warning_fire': 'critical',
+    'warning_smoke': 'high',
 }
 
 DEFAULT_ACTIONS: dict[str, str] = {
@@ -77,9 +85,12 @@ def _build_description(record: DetectionRecord, violations: list[Violation]) -> 
     lines = [f'在"{record.filename}"的检测中，发现以下安全隐患：']
     labels = {
         'warning_no_hardhat': '未佩戴安全帽',
+        'warning_no_mask': '未佩戴口罩',
+        'warning_no_safety_vest': '未穿反光背心',
         'warning_people_in_controlled_area': '进入锥形桶管控区',
         'detect_machinery_close_to_pole': '机械靠近电线杆',
-        'warning_no_safety_vest': '未穿反光背心',
+        'warning_fire': '检测到火焰',
+        'warning_smoke': '检测到烟雾',
     }
     for vtype, count in type_counts.items():
         label = labels.get(vtype, vtype)
@@ -93,6 +104,7 @@ def _build_actions(case_type: str) -> str:
 
 
 def create_case(db: Session, data: CaseCreate) -> Case:
+    now = datetime.now()
     case = Case(
         title=data.title,
         case_type=data.case_type,
@@ -102,6 +114,8 @@ def create_case(db: Session, data: CaseCreate) -> Case:
         process_info=data.process_info,
         images=data.images,
         source_record_id=data.source_record_id,
+        created_at=now,
+        updated_at=now,
     )
     db.add(case)
     db.commit()
@@ -120,8 +134,24 @@ def create_case_from_record(db: Session, record_id: int) -> Case | None:
         ).all()
     )
 
+    # Fallback: use violation_counts if violations table is empty
     if not violations:
-        return None
+        vc_rows = db.scalars(
+            select(ViolationCount).where(ViolationCount.record_id == record_id)
+        ).all()
+        if not vc_rows:
+            return None
+        violations = [
+            Violation(
+                record_id=record_id,
+                violation_type=vc.violation_type,
+                bbox=[],
+                confidence=0.0,
+                screenshot_path='',
+            )
+            for vc in vc_rows
+            for _ in range(vc.count)
+        ]
 
     case_type = _map_case_type(violations)
     severity = _map_severity(violations)
@@ -138,6 +168,7 @@ def create_case_from_record(db: Session, record_id: int) -> Case | None:
         f'已记录违规信息，现场管理人员需跟进处理。'
     )
 
+    now_dt = datetime.now()
     case = Case(
         title=title,
         case_type=case_type,
@@ -147,6 +178,8 @@ def create_case_from_record(db: Session, record_id: int) -> Case | None:
         process_info=process,
         images=images,
         source_record_id=record_id,
+        created_at=now_dt,
+        updated_at=now_dt,
     )
     db.add(case)
     db.commit()
